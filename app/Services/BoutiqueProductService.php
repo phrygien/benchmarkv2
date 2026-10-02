@@ -99,11 +99,13 @@ class BoutiqueProductService
             self::CACHE_TTL,
             function () use ($id) {
                 $rows = DB::connection(self::CONNECTION)->select(
-                    $this->selectSql() . ' WHERE product_int.status >= 0 AND produit.entity_id = ? LIMIT 1',
+                    $this->selectSql() . ' WHERE product_int.status >= 0 AND produit.entity_id = ?',
                     [$id]
                 );
 
-                return isset($rows[0]) ? $this->sanitizeRow($rows[0]) : null;
+                $row = $this->pickBestRow($rows);
+
+                return $row ? $this->sanitizeRow($row) : null;
             }
         );
     }
@@ -152,6 +154,13 @@ class BoutiqueProductService
 
     private function cacheKey(string $type, array $filters, ...$params): string
     {
+        // Évite de hasher une très longue liste de SKU : on la réduit à une empreinte
+        if (is_array($filters['skus'] ?? null)) {
+            $skus = $filters['skus'];
+            sort($skus);
+            $filters['skus'] = md5(implode(',', $skus));
+        }
+
         return $this->versionedKey(
             $type . ':' . md5(json_encode($filters)) . ':' . implode(':', $params)
         );
@@ -182,24 +191,54 @@ class BoutiqueProductService
 
         $offset = ($page - 1) * $perPage;
 
-        $sql = $this->selectSql() . "
+        // 1) IDs distincts de la page : on pagine des PRODUITS, pas des lignes de jointure
+        $idRows = DB::connection(self::CONNECTION)->select("
+            SELECT produit.entity_id AS id
+            {$this->fromSql()}
             WHERE product_int.status >= 0
             {$where}
+            GROUP BY produit.entity_id
             ORDER BY produit.entity_id DESC
             LIMIT ? OFFSET ?
-        ";
+        ", array_merge($params, [$perPage, $offset]));
 
-        $rows = DB::connection(self::CONNECTION)->select(
-            $sql,
-            array_merge($params, [$perPage, $offset])
-        );
+        $ids = array_map(fn ($r) => (int) $r->id, $idRows);
+
+        // 2) Détail des produits de la page, dédoublonné (1 ligne par produit)
+        $data = [];
+
+        if (!empty($ids)) {
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+            $rows = DB::connection(self::CONNECTION)->select(
+                $this->selectSql() . " WHERE product_int.status >= 0 AND produit.entity_id IN ({$placeholders})",
+                $ids
+            );
+
+            $byId = [];
+            foreach ($rows as $row) {
+                $id = (int) $row->id;
+
+                // On garde la 1re ligne, mais on préfère celle qui a une option (contenance)
+                if (!isset($byId[$id]) || (empty($byId[$id]->option_value) && !empty($row->option_value))) {
+                    $byId[$id] = $row;
+                }
+            }
+
+            // Respecter l'ordre des IDs (DESC)
+            foreach ($ids as $id) {
+                if (isset($byId[$id])) {
+                    $data[] = $this->sanitizeRow($byId[$id]);
+                }
+            }
+        }
 
         return [
             'total_item'   => (int) $total,
             'per_page'     => $perPage,
             'total_page'   => $lastPage,
             'current_page' => $page,
-            'data'         => array_map(fn ($row) => $this->sanitizeRow($row), $rows),
+            'data'         => $data,
             'cached_at'    => now()->toDateTimeString(),
         ];
     }
@@ -207,13 +246,30 @@ class BoutiqueProductService
     private function countProducts(string $where, array $params): int
     {
         $result = DB::connection(self::CONNECTION)->selectOne("
-            SELECT COUNT(*) AS nb
+            SELECT COUNT(DISTINCT produit.entity_id) AS nb
             {$this->fromSql()}
             WHERE product_int.status >= 0
             {$where}
         ", $params);
 
         return (int) ($result->nb ?? 0);
+    }
+
+    /**
+     * Parmi plusieurs lignes d'un même produit, garde la 1re
+     * en préférant celle qui porte une option (contenance).
+     */
+    private function pickBestRow(array $rows): ?object
+    {
+        $best = null;
+
+        foreach ($rows as $row) {
+            if ($best === null || (empty($best->option_value) && !empty($row->option_value))) {
+                $best = $row;
+            }
+        }
+
+        return $best;
     }
 
     /**

@@ -9,7 +9,7 @@ Route::middleware(['auth'])->group(function () {
     // Produit boutique
     Route::livewire('/produits/boutiques', 'pages::produit.boutique')->name('produits.boutiques');
     // Comparateur page
-    Route::livewire('/magento-product-pays', 'pages::comparateur.page')->name('magento-product-pays');
+    Route::livewire('/magento-product-pays', 'pages::comparateur.produit-par-pays')->name('magento.product-pays');
 });
 
 require __DIR__.'/settings.php';

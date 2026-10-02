@@ -9,8 +9,8 @@
         <flux:brand href="#" logo="https://fluxui.dev/img/demo/logo.png" name="Acme Inc." class="max-lg:hidden dark:hidden" />
         <flux:brand href="#" logo="https://fluxui.dev/img/demo/dark-mode-logo.png" name="Acme Inc." class="max-lg:hidden! hidden dark:flex" />
         <flux:navbar class="-mb-px max-lg:hidden">
-            <flux:navbar.item href="{{ route('produits.boutiques') }}" wire:navigate current>Produits boutique</flux:navbar.item>
-            <flux:navbar.item href="#">Comaparateur / Pays</flux:navbar.item>
+            <flux:navbar.item href="{{ route('produits.boutiques') }}" wire:navigate>Produits boutique</flux:navbar.item>
+            <flux:navbar.item href="{{ route('magento.product-pays') }}" wire:navigate>Comaparateur / Pays</flux:navbar.item>
             <flux:navbar.item href="#">Top vente / Pays</flux:navbar.item>
             <flux:navbar.item href="#">Google top produit / pays</flux:navbar.item>
         </flux:navbar>

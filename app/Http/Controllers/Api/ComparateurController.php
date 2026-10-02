@@ -206,6 +206,9 @@ class ComparateurController extends Controller
      * Tous les EAN présents chez au moins un concurrent (mis en cache),
      * utilisés pour filtrer le catalogue boutique avec only_matched=1.
      *
+     * Chaque EAN est décliné en toutes ses variantes (UPC-12, EAN-13, GTIN-14...)
+     * pour retrouver le SKU boutique quel que soit son format.
+     *
      * @return string[]
      */
     private function matchedSkus(): array
@@ -220,14 +223,7 @@ class ComparateurController extends Controller
                     ->where('prix_ht', '>', 0)
                     ->distinct()
                     ->pluck('ean')
-                    ->flatMap(function ($ean) {
-                        $ean = trim((string) $ean);
-
-                        // EAN brut + version EAN-13 (zéros de tête)
-                        return ctype_digit($ean)
-                            ? [$ean, str_pad(ltrim($ean, '0') ?: '0', 13, '0', STR_PAD_LEFT)]
-                            : [$ean];
-                    })
+                    ->flatMap(fn ($ean) => $this->eanVariants(trim((string) $ean)))
                     ->unique()
                     ->values()
                     ->all();
