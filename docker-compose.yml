@@ -6,7 +6,7 @@ services:
         container_name: benchmark-cosma
         restart: unless-stopped
         ports:
-            - "9039:80"
+            - "9039:443"
         env_file: .env
         environment:
             DB_HOST: host.docker.internal
@@ -16,6 +16,7 @@ services:
             - "host.docker.internal:host-gateway"
         volumes:
             - storage:/var/www/html/storage
+            - /etc/letsencrypt:/etc/letsencrypt:ro
         depends_on:
             - redis
         networks:
