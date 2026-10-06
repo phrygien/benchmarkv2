@@ -14,7 +14,6 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
-# Flux/Livewire exposent des fichiers CSS/JS dans vendor/
 COPY --from=vendor /app/vendor ./vendor
 RUN npm run build
 
@@ -50,6 +49,6 @@ RUN mkdir -p storage/framework/cache storage/framework/sessions storage/framewor
  && chown -R www-data:www-data storage bootstrap/cache \
  && chmod -R 775 storage bootstrap/cache
 
-EXPOSE 80
+EXPOSE 443
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["supervisord", "-c", "/etc/supervisord.conf"]

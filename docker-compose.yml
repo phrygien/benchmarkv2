@@ -11,7 +11,7 @@ services:
         environment:
             DB_HOST: host.docker.internal
             REDIS_HOST: redis
-            RUN_MIGRATIONS: "true"
+            RUN_MIGRATIONS: "false"
         extra_hosts:
             - "host.docker.internal:host-gateway"
         volumes:
