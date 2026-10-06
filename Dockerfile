@@ -24,12 +24,14 @@ FROM php:8.3-fpm-alpine AS app
 RUN apk add --no-cache \
     nginx supervisor bash curl git unzip \
     libzip-dev libpng-dev libjpeg-turbo-dev freetype-dev \
-    libxml2-dev oniguruma-dev icu-dev libpq-dev mariadb-client \
+    libxml2-dev oniguruma-dev icu-dev libpq-dev \
     $PHPIZE_DEPS \
  && docker-php-ext-configure gd --with-freetype --with-jpeg \
  && docker-php-ext-install -j$(nproc) \
     pdo_mysql pdo_pgsql mbstring zip gd xml intl bcmath pcntl opcache exif \
- && pecl install redis && docker-php-ext-enable redis \
+ && git clone --depth 1 --branch 6.3.0 https://github.com/phpredis/phpredis.git /usr/src/php/ext/redis \
+ && rm -rf /usr/src/php/ext/redis/.git \
+ && docker-php-ext-install redis \
  && apk del $PHPIZE_DEPS \
  && rm -rf /var/cache/apk/* /tmp/pear
 
@@ -44,7 +46,7 @@ WORKDIR /var/www/html
 COPY --from=vendor /app /var/www/html
 COPY --from=assets /app/public/build /var/www/html/public/build
 
-RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
+RUN mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
  && chown -R www-data:www-data storage bootstrap/cache \
  && chmod -R 775 storage bootstrap/cache
 
