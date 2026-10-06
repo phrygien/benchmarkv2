@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Api\ComparateurController;
 use App\Http\Controllers\Api\ProduitboutiqueController;
+use App\Http\Controllers\Api\ProduitTopVenteController;
+use App\Http\Controllers\Api\GoogletopproduitController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -29,4 +31,21 @@ Route::prefix('products')->group(function () {
 Route::prefix('comparateur')->group(function () {
     Route::get('/', [ComparateurController::class, 'index']);      // tout le catalogue + prix concurrents
     Route::get('/{sku}', [ComparateurController::class, 'show']);  // un seul SKU / EAN
+});
+
+/*
+|--------------------------------------------------------------------------
+| Top ventes de la boutique (Magento) + prix concurrents
+|--------------------------------------------------------------------------
+*/
+Route::prefix('top-ventes')->group(function () {
+    Route::get('/', [ProduitTopVenteController::class, 'index']);          // top ventes + concurrents
+    Route::get('/groupes', [ProduitTopVenteController::class, 'groupes']); // vendors pour le filtre
+    Route::delete('/cache', [ProduitTopVenteController::class, 'clearCache']);
+});
+
+Route::prefix('google-top-produits')->group(function () {
+    Route::get('/', [GoogletopproduitController::class, 'index']);
+    Route::get('/groupes', [GoogletopproduitController::class, 'groupes']);
+    Route::delete('/cache', [GoogletopproduitController::class, 'clearCache']);
 });

@@ -10,6 +10,8 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "google/analytics-data": "^0.28.0",
+        "google/shopping-merchant-reports": "^1.4",
         "laravel/chisel": "^0.1.0",
         "laravel/fortify": "^1.37.2",
         "laravel/framework": "^13.17",
@@ -17,7 +19,9 @@
         "laravel/tinker": "^3.0",
         "livewire/blaze": "^1.0",
         "livewire/flux": "^2.13.1",
-        "livewire/livewire": "^4.1"
+        "livewire/livewire": "^4.1",
+        "maatwebsite/excel": "^4.0",
+        "openspout/openspout": "^5.12"
     },
     "require-dev": {
         "fakerphp/faker": "^1.24",

@@ -6,13 +6,13 @@
     <body class="min-h-dvh bg-zinc-50 dark:bg-zinc-900">
     <flux:header class="bg-zinc-50 dark:bg-zinc-900">
         <flux:sidebar.toggle class="lg:hidden" icon="bars-2" inset="left" />
-        <flux:brand href="#" logo="https://fluxui.dev/img/demo/logo.png" name="Acme Inc." class="max-lg:hidden dark:hidden" />
-        <flux:brand href="#" logo="https://fluxui.dev/img/demo/dark-mode-logo.png" name="Acme Inc." class="max-lg:hidden! hidden dark:flex" />
+        <flux:brand href="{{ route('produits.boutiques') }}" logo="https://fluxui.dev/img/demo/logo.png" name="BenchMark Cosma" class="max-lg:hidden dark:hidden" wire:navigate />
+        <flux:brand href="{{ route('produits.boutiques') }}" logo="https://fluxui.dev/img/demo/dark-mode-logo.png" name="BenchMark Cosma" class="max-lg:hidden! hidden dark:flex" wire:navigate />
         <flux:navbar class="-mb-px max-lg:hidden">
             <flux:navbar.item href="{{ route('produits.boutiques') }}" wire:navigate>Produits boutique</flux:navbar.item>
             <flux:navbar.item href="{{ route('magento.product-pays') }}" wire:navigate>Comaparateur / Pays</flux:navbar.item>
-            <flux:navbar.item href="#">Top vente / Pays</flux:navbar.item>
-            <flux:navbar.item href="#">Google top produit / pays</flux:navbar.item>
+            <flux:navbar.item href="{{ route('top.vente-par-pays') }}" wire:navigate>Top vente / Pays</flux:navbar.item>
+            <flux:navbar.item href="{{ route('top.google') }}" wire:navigate>Google top produit / pays</flux:navbar.item>
         </flux:navbar>
         <flux:spacer />
         <flux:navbar class="mr-4">
