@@ -332,10 +332,30 @@ class BoutiqueProductService
             $params[] = '%' . $this->normalizeSearch($filters['ean']) . '%';
         }
 
-        // Filtre : liste de SKU imposée (ex. produits ayant un prix concurrent)
+        // Filtre : liste de SKU imposée (ex. produits ayant un prix concurrent).
+        //
+        // Cette liste peut contenir des dizaines de milliers de valeurs : MySQL refuse plus de
+        // 65 535 placeholders par requête préparée (erreur 1390). Les valeurs sont donc écrites
+        // en littéraux dans le SQL. C'est sûr car on ne garde que des chiffres (\D retiré),
+        // et on compare sans zéros de tête des deux côtés (UPC-12 / EAN-13 / GTIN-14).
         if (is_array($filters['skus'] ?? null) && !empty($filters['skus'])) {
-            $where .= ' AND produit.sku IN (' . implode(',', array_fill(0, count($filters['skus']), '?')) . ') ';
-            array_push($params, ...array_values($filters['skus']));
+            $digits = [];
+
+            foreach ($filters['skus'] as $sku) {
+                $sku = preg_replace('/\D/', '', (string) $sku);
+
+                if ($sku !== '') {
+                    $digits[ltrim($sku, '0') ?: '0'] = true; // clé = dédoublonnage
+                }
+            }
+
+            if (empty($digits)) {
+                $where .= ' AND 1 = 0 ';
+            } else {
+                $where .= " AND TRIM(LEADING '0' FROM produit.sku) IN ('"
+                    . implode("','", array_map('strval', array_keys($digits)))
+                    . "') ";
+            }
         }
 
         // Filtre : prix minimum / maximum

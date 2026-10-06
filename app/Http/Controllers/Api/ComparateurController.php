@@ -118,6 +118,7 @@ class ComparateurController extends Controller
 
     /**
      * Prix concurrents pour une liste de SKU, en une seule requête.
+     * (Appelé avec les SKU d'une seule page : au plus per_page × 5 variantes.)
      *
      * @param  string[]  $skus
      * @return array<string, array{competitors: array, summary: array}>  indexé par SKU
@@ -206,15 +207,16 @@ class ComparateurController extends Controller
      * Tous les EAN présents chez au moins un concurrent (mis en cache),
      * utilisés pour filtrer le catalogue boutique avec only_matched=1.
      *
-     * Chaque EAN est décliné en toutes ses variantes (UPC-12, EAN-13, GTIN-14...)
-     * pour retrouver le SKU boutique quel que soit son format.
+     * Les EAN sont renvoyés NORMALISÉS (sans zéros de tête) et sans variantes :
+     * BoutiqueProductService::buildWhere() compare avec TRIM(LEADING '0' FROM sku),
+     * ce qui couvre UPC-12, EAN-13 et GTIN-14 sans multiplier la taille de la liste.
      *
      * @return string[]
      */
     private function matchedSkus(): array
     {
         return Cache::remember(
-            'comparateur:matched-skus:v' . $this->products->cacheVersion(),
+            'comparateur:matched-skus:v2:' . $this->products->cacheVersion(),
             self::MATCHED_SKUS_TTL,
             function () {
                 return ScrapedProduct::query()
@@ -223,7 +225,9 @@ class ComparateurController extends Controller
                     ->where('prix_ht', '>', 0)
                     ->distinct()
                     ->pluck('ean')
-                    ->flatMap(fn ($ean) => $this->eanVariants(trim((string) $ean)))
+                    ->map(fn ($ean) => trim((string) $ean))
+                    ->filter(fn ($ean) => $ean !== '' && ctype_digit($ean))
+                    ->map(fn ($ean) => ltrim($ean, '0') ?: '0')
                     ->unique()
                     ->values()
                     ->all();
