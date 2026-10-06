@@ -54,7 +54,7 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
         return "google-top-produits:export:{$token}";
     }
 
-    public function handle(GoogleTopProduitService $google, CompetitorPriceService $competitorPrices): void
+    public function handle(GoogleTopProduitService $google, Competitorpriceservice $competitorPrices): void
     {
         $this->status('running', ['done' => 0, 'total' => null]);
 

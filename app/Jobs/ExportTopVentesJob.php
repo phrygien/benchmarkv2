@@ -56,7 +56,7 @@ class ExportTopVentesJob implements ShouldQueue
         return "top-ventes:export:{$token}";
     }
 
-    public function handle(TopVenteService $sales, CompetitorPriceService $competitorPrices): void
+    public function handle(TopVenteService $sales, Competitorpriceservice $competitorPrices): void
     {
         $this->status('running', ['done' => 0, 'total' => null]);
 
