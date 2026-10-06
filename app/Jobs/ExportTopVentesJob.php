@@ -2,7 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Services\Competitorpriceservicerice;
+use App\Services\Competitorpriceservice;
 use App\Services\TopVenteService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
