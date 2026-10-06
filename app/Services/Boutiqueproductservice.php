@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
  * Logique d'accès aux produits de la boutique (base Magento).
  * Partagée par ProduitboutiqueController et ComparateurController.
  */
-class BoutiqueProductService
+class Boutiqueproductservice
 {
     public const CONNECTION = 'mysqlMagento';
     public const CACHE_PREFIX = 'boutique';

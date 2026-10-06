@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ScrapedProduct;
-use App\Services\BoutiqueProductService;
+use App\Services\Boutiqueproductservice;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -31,7 +31,7 @@ class ComparateurController extends Controller
 {
     private const MATCHED_SKUS_TTL = 600; // 10 minutes
 
-    public function __construct(private BoutiqueProductService $products)
+    public function __construct(private Boutiqueproductservice $products)
     {
     }
 
@@ -44,12 +44,12 @@ class ComparateurController extends Controller
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate(
-            BoutiqueProductService::rules() + ['only_matched' => ['nullable', 'boolean']]
+            Boutiqueproductservice::rules() + ['only_matched' => ['nullable', 'boolean']]
         );
 
         $filters = $this->products->filtersFrom($request);
         $page    = (int) ($validated['page'] ?? 1);
-        $perPage = (int) ($validated['per_page'] ?? BoutiqueProductService::DEFAULT_PER_PAGE);
+        $perPage = (int) ($validated['per_page'] ?? Boutiqueproductservice::DEFAULT_PER_PAGE);
 
         try {
             // Option : ne garder que les produits présents chez au moins un concurrent
@@ -82,7 +82,7 @@ class ComparateurController extends Controller
                     'cached_at'    => $payload['cached_at'],
                 ],
                 'links' => $this->products->paginationLinks($request, $payload['current_page'], $payload['total_page']),
-            ], 200, [], BoutiqueProductService::JSON_FLAGS);
+            ], 200, [], Boutiqueproductservice::JSON_FLAGS);
         } catch (\Throwable $e) {
             return $this->errorResponse($e);
         }
@@ -104,7 +104,7 @@ class ComparateurController extends Controller
 
             return response()->json([
                 'data' => ['sku' => $sku, 'found' => !empty($comparison['competitors'])] + $comparison,
-            ], 200, [], BoutiqueProductService::JSON_FLAGS);
+            ], 200, [], Boutiqueproductservice::JSON_FLAGS);
         } catch (\Throwable $e) {
             return $this->errorResponse($e);
         }
@@ -208,7 +208,7 @@ class ComparateurController extends Controller
      * utilisés pour filtrer le catalogue boutique avec only_matched=1.
      *
      * Les EAN sont renvoyés NORMALISÉS (sans zéros de tête) et sans variantes :
-     * BoutiqueProductService::buildWhere() compare avec TRIM(LEADING '0' FROM sku),
+     * Boutiqueproductservice::buildWhere() compare avec TRIM(LEADING '0' FROM sku),
      * ce qui couvre UPC-12, EAN-13 et GTIN-14 sans multiplier la taille de la liste.
      *
      * @return string[]

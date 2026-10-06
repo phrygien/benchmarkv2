@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Top ventes de la boutique (base Magento) : quantités / CA par EAN, par pays de livraison.
- * Même principe que BoutiqueProductService : requêtes paramétrées + cache versionné.
+ * Même principe que Boutiqueproductservice : requêtes paramétrées + cache versionné.
  */
 class TopVenteService
 {

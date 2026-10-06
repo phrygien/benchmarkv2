@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\BoutiqueProductService;
+use App\Services\Boutiqueproductservice;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\Log;
 
 class ProduitboutiqueController extends Controller
 {
-    public function __construct(private BoutiqueProductService $products)
+    public function __construct(private Boutiqueproductservice $products)
     {
     }
 
@@ -33,11 +33,11 @@ class ProduitboutiqueController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $validated = $request->validate(BoutiqueProductService::rules());
+        $validated = $request->validate(Boutiqueproductservice::rules());
 
         $filters = $this->products->filtersFrom($request);
         $page    = (int) ($validated['page'] ?? 1);
-        $perPage = (int) ($validated['per_page'] ?? BoutiqueProductService::DEFAULT_PER_PAGE);
+        $perPage = (int) ($validated['per_page'] ?? Boutiqueproductservice::DEFAULT_PER_PAGE);
 
         try {
             $payload = $this->products->paginate($filters, $page, $perPage);
@@ -52,7 +52,7 @@ class ProduitboutiqueController extends Controller
                     'cached_at'    => $payload['cached_at'],
                 ],
                 'links' => $this->products->paginationLinks($request, $payload['current_page'], $payload['total_page']),
-            ], 200, [], BoutiqueProductService::JSON_FLAGS);
+            ], 200, [], Boutiqueproductservice::JSON_FLAGS);
         } catch (\Throwable $e) {
             return $this->errorResponse($e, 'Erreur lors de la récupération des produits.');
         }
@@ -70,7 +70,7 @@ class ProduitboutiqueController extends Controller
                 return response()->json(['message' => 'Produit introuvable.'], 404);
             }
 
-            return response()->json(['data' => $product], 200, [], BoutiqueProductService::JSON_FLAGS);
+            return response()->json(['data' => $product], 200, [], Boutiqueproductservice::JSON_FLAGS);
         } catch (\Throwable $e) {
             return $this->errorResponse($e, 'Erreur lors de la récupération du produit.');
         }
@@ -98,7 +98,7 @@ class ProduitboutiqueController extends Controller
         return response()->json([
             'cache_driver'  => config('cache.default'),
             'cache_version' => $this->products->cacheVersion(),
-            'ttl_seconds'   => BoutiqueProductService::CACHE_TTL,
+            'ttl_seconds'   => Boutiqueproductservice::CACHE_TTL,
         ]);
     }
 
