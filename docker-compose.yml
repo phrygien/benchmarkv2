@@ -16,7 +16,8 @@ services:
             - "host.docker.internal:host-gateway"
         volumes:
             - storage:/var/www/html/storage
-            - /etc/letsencrypt:/etc/letsencrypt:ro
+            - ./certs:/etc/ssl/app:ro
+            - ./docker/nginx/default.conf:/etc/nginx/http.d/default.conf:ro
         depends_on:
             - redis
         networks:
