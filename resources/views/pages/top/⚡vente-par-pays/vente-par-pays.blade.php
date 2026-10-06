@@ -148,7 +148,7 @@
 
             <flux:table.rows>
                 @if (! $loaded)
-                    @foreach (range(1, min($perPage, 10)) as $i)
+                    @foreach (range(1, min($perPage, 25)) as $i)
                         <flux:table.row :key="'skeleton-' . $i">
                             @foreach (range(1, 7 + count($this->visibleWebsites)) as $j)
                                 <flux:table.cell>
