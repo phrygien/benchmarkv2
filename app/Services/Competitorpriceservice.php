@@ -9,7 +9,7 @@ use App\Models\ScrapedProduct;
  * Même logique que ComparateurController::competitorsFor(), mais réutilisable,
  * avec un filtre optionnel par pays du site concurrent.
  */
-class CompetitorPriceService
+class Competitorpriceservice
 {
     /**
      * @param  string[]     $eans
