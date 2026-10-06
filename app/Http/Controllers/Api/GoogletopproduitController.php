@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\CompetitorPriceService;
+use App\Services\Competitorpriceservice;
 use App\Services\GoogleTopProduitService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,7 +21,7 @@ class GoogletopproduitController extends Controller
 {
     public function __construct(
         private GoogleTopProduitService $service,
-        private CompetitorPriceService $competitorPrices,
+        private Competitorpriceservice $competitorPrices,
     ) {
     }
 
