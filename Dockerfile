@@ -19,7 +19,7 @@ COPY --from=vendor /app/vendor ./vendor
 RUN npm run build
 
 # ---------- Étape 3 : image finale ----------
-FROM php:8.3-fpm-alpine AS app
+FROM php:8.4-fpm-alpine AS app
 
 RUN apk add --no-cache \
     nginx supervisor bash curl git unzip \
