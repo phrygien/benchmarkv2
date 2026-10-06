@@ -2,7 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Services\CompetitorPriceService;
+use App\Services\Competitorpricepervice;
 use App\Services\GoogleTopProduitService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
