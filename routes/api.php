@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\ComparateurController;
 use App\Http\Controllers\Api\ProduitboutiqueController;
 use App\Http\Controllers\Api\ProduitTopVenteController;
 use App\Http\Controllers\Api\GoogletopproduitController;
+use App\Http\Controllers\Api\AnalyticController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
