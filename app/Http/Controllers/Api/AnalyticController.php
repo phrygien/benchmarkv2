@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\BoutiqueProductService;
+use App\Services\Boutiqueproductservice;
 use App\Services\PriceAnalyticsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,7 +13,7 @@ class AnalyticController extends Controller
 {
     public function __construct(
         private PriceAnalyticsService $analytics,
-        private BoutiqueProductService $boutique,
+        private Boutiqueproductservice $boutique,
     ) {
     }
 
