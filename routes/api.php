@@ -49,3 +49,9 @@ Route::prefix('google-top-produits')->group(function () {
     Route::get('/groupes', [GoogletopproduitController::class, 'groupes']);
     Route::delete('/cache', [GoogletopproduitController::class, 'clearCache']);
 });
+
+Route::prefix('analytics')->group(function () {
+    Route::get('/summary', [AnalyticController::class, 'summary']);    // KPIs + distributions + tops
+    Route::get('/products', [AnalyticController::class, 'products']);  // détail filtrable
+    Route::delete('/cache', [AnalyticController::class, 'clearCache']);
+});
