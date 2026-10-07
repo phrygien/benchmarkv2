@@ -1,6 +1,9 @@
 @php
     // Actions Livewire qui déclenchent l'affichage du skeleton
     $loadingTargets = 'search,perPage,gotoPage,nextPage,previousPage,setPage';
+
+    // Force le calcul des produits AVANT le callout, pour que $error soit renseigné
+    $products = $this->products;
 @endphp
 
 <div class="space-y-6" wire:init="load">
@@ -9,7 +12,7 @@
             <flux:heading size="xl">Produits boutique</flux:heading>
             <flux:text class="mt-1">
                 @if ($loaded)
-                    {{ number_format($this->products->total(), 0, ',', ' ') }} produit(s)
+                    {{ number_format($products->total(), 0, ',', ' ') }} produit(s)
                 @else
                     <flux:skeleton class="h-4 w-24" animate="shimmer" />
                 @endif
@@ -36,11 +39,17 @@
 
     @if ($error)
         <flux:callout variant="danger" icon="x-circle" heading="Erreur lors de l'appel à l'API">
-            {{ $error }}
+            <div class="space-y-2">
+                <div class="font-medium">{{ $error }}</div>
+
+                @if ($errorDetails && config('app.debug'))
+                    <pre class="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-black/5 p-3 text-xs dark:bg-white/10">{{ $errorDetails }}</pre>
+                @endif
+            </div>
         </flux:callout>
     @endif
 
-    <flux:table :paginate="$this->products">
+    <flux:table :paginate="$products">
         <flux:table.columns>
             <flux:table.column>Produit</flux:table.column>
             <flux:table.column>SKU / EAN</flux:table.column>
@@ -82,7 +91,7 @@
 
             {{-- Vraies lignes : masquées pendant le chargement --}}
             @if ($loaded)
-                @forelse ($this->products as $product)
+                @forelse ($products as $product)
                     {{-- L'API peut renvoyer des doublons d'id (jointures) : on ajoute l'index à la clé --}}
                     <flux:table.row
                         :key="$product->id . '-' . $loop->index"

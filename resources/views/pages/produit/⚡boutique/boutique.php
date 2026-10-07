@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Http;
@@ -19,6 +20,8 @@ new class extends Component
     public int $perPage = 100;
 
     public ?string $error = null;
+
+    public ?string $errorDetails = null;
 
     // false tant que la page n'a pas fini son premier affichage
     public bool $loaded = false;
@@ -42,17 +45,10 @@ new class extends Component
     public function products(): LengthAwarePaginator
     {
         $page = $this->getPage();
-        $this->error = null;
 
         // Premier rendu : page vide instantanée, l'API est appelée ensuite via wire:init
         if (! $this->loaded) {
-            return new LengthAwarePaginator(
-                items: [],
-                total: 0,
-                perPage: $this->perPage,
-                currentPage: $page,
-                options: ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'],
-            );
+            return $this->emptyPaginator($page);
         }
 
         $query = array_filter([
@@ -60,6 +56,10 @@ new class extends Component
             'page'     => $page,
             'per_page' => $this->perPage,
         ], fn ($value) => $value !== '' && $value !== null);
+
+        $this->error = null;
+        $this->errorDetails = null;
+        $response = [];
 
         try {
             $response = Http::acceptJson()
@@ -69,9 +69,15 @@ new class extends Component
                 ->get(url('/api/products'), $query)
                 ->throw()
                 ->json();
-        } catch (\Throwable $e) {
+        } catch (RequestException $e) {
+            // Erreur HTTP (4xx / 5xx) : statut + corps de la réponse
             $this->error = $e->getMessage();
-            $response = [];
+            $this->errorDetails = 'HTTP ' . $e->response->status() . "\n\n"
+                . str($e->response->body())->limit(2000);
+        } catch (\Throwable $e) {
+            // Erreur réseau, timeout, SSL, JSON invalide...
+            $this->error = $e->getMessage();
+            $this->errorDetails = get_class($e) . ' — ' . basename($e->getFile()) . ':' . $e->getLine();
         }
 
         return new LengthAwarePaginator(
@@ -79,10 +85,18 @@ new class extends Component
             total: $response['meta']['total'] ?? 0,
             perPage: $this->perPage,
             currentPage: $response['meta']['current_page'] ?? $page,
-            options: [
-                'path'     => Paginator::resolveCurrentPath(),
-                'pageName' => 'page',
-            ],
+            options: ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'],
+        );
+    }
+
+    private function emptyPaginator(int $page): LengthAwarePaginator
+    {
+        return new LengthAwarePaginator(
+            items: [],
+            total: 0,
+            perPage: $this->perPage,
+            currentPage: $page,
+            options: ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'],
         );
     }
 };
