@@ -1,9 +1,8 @@
 <?php
 
-use Illuminate\Http\Client\RequestException;
+use App\Services\Boutiqueproductservice;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\Paginator;
-use Illuminate\Support\Facades\Http;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -17,7 +16,7 @@ new class extends Component
     public string $search = '';
 
     #[Url]
-    public int $perPage = 100;
+    public int $perPage = 30;
 
     public ?string $error = null;
 
@@ -44,57 +43,54 @@ new class extends Component
     #[Computed]
     public function products(): LengthAwarePaginator
     {
-        $page = $this->getPage();
+        $page    = $this->getPage();
+        $perPage = max(1, min($this->perPage, Boutiqueproductservice::MAX_PER_PAGE));
 
-        // Premier rendu : page vide instantanée, l'API est appelée ensuite via wire:init
+        // Premier rendu : page vide instantanée, les données arrivent via wire:init
         if (! $this->loaded) {
-            return $this->emptyPaginator($page);
+            return $this->makePaginator([], 0, $perPage, $page);
         }
-
-        $query = array_filter([
-            'search'   => $this->search,
-            'page'     => $page,
-            'per_page' => $this->perPage,
-        ], fn ($value) => $value !== '' && $value !== null);
 
         $this->error = null;
         $this->errorDetails = null;
-        $response = [];
+
+        // Même structure que Boutiqueproductservice::filtersFrom()
+        // (donc même clé de cache que l'API)
+        $filters = [
+            'search'    => trim($this->search),
+            'name'      => '',
+            'marque'    => '',
+            'type'      => '',
+            'ean'       => '',
+            'min_price' => null,
+            'max_price' => null,
+            'in_stock'  => false,
+            'skus'      => null,
+        ];
 
         try {
-            $response = Http::acceptJson()
-                ->timeout(30)
-                // Certificat auto-signé de Herd en local
-                ->when(app()->isLocal(), fn ($http) => $http->withoutVerifying())
-                ->get(url('/api/products'), $query)
-                ->throw()
-                ->json();
-        } catch (RequestException $e) {
-            // Erreur HTTP (4xx / 5xx) : statut + corps de la réponse
-            $this->error = $e->getMessage();
-            $this->errorDetails = 'HTTP ' . $e->response->status() . "\n\n"
-                . str($e->response->body())->limit(2000);
+            $payload = app(Boutiqueproductservice::class)->paginate($filters, $page, $perPage);
+
+            return $this->makePaginator(
+                collect($payload['data'])->map(fn ($row) => (object) $row),
+                (int) $payload['total_item'],
+                $perPage,
+                (int) $payload['current_page'],
+            );
         } catch (\Throwable $e) {
-            // Erreur réseau, timeout, SSL, JSON invalide...
             $this->error = $e->getMessage();
             $this->errorDetails = get_class($e) . ' — ' . basename($e->getFile()) . ':' . $e->getLine();
-        }
 
-        return new LengthAwarePaginator(
-            items: collect($response['data'] ?? [])->map(fn ($row) => (object) $row),
-            total: $response['meta']['total'] ?? 0,
-            perPage: $this->perPage,
-            currentPage: $response['meta']['current_page'] ?? $page,
-            options: ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'],
-        );
+            return $this->makePaginator([], 0, $perPage, $page);
+        }
     }
 
-    private function emptyPaginator(int $page): LengthAwarePaginator
+    private function makePaginator($items, int $total, int $perPage, int $page): LengthAwarePaginator
     {
         return new LengthAwarePaginator(
-            items: [],
-            total: 0,
-            perPage: $this->perPage,
+            items: $items,
+            total: $total,
+            perPage: $perPage,
             currentPage: $page,
             options: ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'],
         );
