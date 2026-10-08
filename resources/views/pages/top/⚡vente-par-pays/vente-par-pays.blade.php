@@ -1,11 +1,10 @@
-
 @php
     $fmt = fn ($n) => number_format((float) $n, 2, ',', ' ') . ' €';
 
     $toneText = [
-    'red'   => 'text-red-600 dark:text-red-400',
-    'green' => 'text-green-600 dark:text-green-400',
-    'zinc'  => 'text-zinc-700 dark:text-zinc-300',
+        'red'   => 'text-red-600 dark:text-red-400',
+        'green' => 'text-green-600 dark:text-green-400',
+        'zinc'  => 'text-zinc-700 dark:text-zinc-300',
     ];
 
     // Évalué ici, avant de lire $this->error (écrite pendant le calcul de la propriété computed)
@@ -128,7 +127,8 @@
         Écart = prix moyen des concurrents (en euros) − notre prix.
         <span class="text-green-600">Vert</span> : concurrents plus chers ·
         <span class="text-red-600">rouge</span> : concurrents moins chers ·
-        gras : meilleur prix concurrent.
+        gras : meilleur prix concurrent ·
+        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours.
     </flux:text>
 
     <div wire:loading.class="opacity-50" wire:target="country,sort,groupe,dateFrom,dateTo,perPage,gotoPage,nextPage,previousPage,setPage">
@@ -240,9 +240,9 @@
                                 @php
                                     $c      = $product->by_site[$site['key']] ?? null;
                                     $isBest = $c
-                                    && ! empty($product->market['best'])
-                                    && $product->market['best']['website'] === ($c['website']['name'] ?? null)
-                                    && (float) $product->market['best']['prix_ht'] === (float) $c['prix_ht'];
+                                        && ! empty($product->market['best'])
+                                        && $product->market['best']['website'] === ($c['website']['name'] ?? null)
+                                        && (float) $product->market['best']['prix_ht'] === (float) $c['prix_ht'];
                                 @endphp
 
                                 <flux:table.cell class="text-center whitespace-nowrap">
@@ -251,10 +251,22 @@
                                             href="{{ $c['url'] }}"
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            title="{{ $c['variation'] ? trim(preg_replace('/\s+/', ' ', $c['variation'])) : 'Contenance inconnue' }}{{ $c['scraped_label'] ? ' — relevé le ' . $c['scraped_label'] : '' }}"
+                                            title="{{ $c['variation'] ? trim(preg_replace('/\s+/', ' ', $c['variation'])) : 'Contenance inconnue' }}{{ $c['scraped_full'] ? ' — relevé le ' . $c['scraped_full'] : '' }}"
                                             class="inline-flex flex-col items-center text-xs hover:underline {{ $toneText[$c['tone']] }}"
                                         >
+                                            {{-- Prix --}}
                                             <span class="{{ $isBest ? 'font-bold' : 'font-semibold' }}">{{ $fmt($c['prix_ht']) }}</span>
+
+                                            {{-- Date de dernière mise à jour du prix --}}
+                                            @if ($c['scraped_label'])
+                                                <span class="text-[11px] font-normal {{ $c['is_stale'] ? 'text-amber-500' : 'text-zinc-500 dark:text-zinc-400' }}">
+                                                    Dernière MAJ : {{ $c['scraped_label'] }}
+                                                </span>
+                                            @else
+                                                <span class="text-[11px] font-normal text-zinc-400">Dernière MAJ : —</span>
+                                            @endif
+
+                                            {{-- Contenance --}}
                                             <span class="max-w-28 truncate font-normal opacity-60">{{ trim(preg_replace('/\s+/', ' ', (string) $c['variation'])) ?: '—' }}</span>
                                         </a>
                                     @else

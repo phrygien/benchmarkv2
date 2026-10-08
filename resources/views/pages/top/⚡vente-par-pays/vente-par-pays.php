@@ -21,6 +21,9 @@ new class extends Component
 {
     use WithPagination;
 
+    // Au-delà de ce nombre de jours, un relevé est signalé comme ancien (orange)
+    private const STALE_DAYS = 7;
+
     private const COUNTRIES = [
         'FR' => 'France',
         'DE' => 'Allemagne',
@@ -283,22 +286,46 @@ new class extends Component
     }
 
     /**
-     * Prépare une ligne : un relevé par site (le plus récent), ton selon l'écart.
+     * Parse une date ISO 8601 de l'API et la convertit dans le fuseau de l'application.
+     */
+    private function parseDate(?string $value): ?Carbon
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value)->setTimezone(config('app.timezone'));
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Prépare une ligne : un relevé par site (le plus récent), ton selon l'écart,
+     * date de dernière mise à jour du prix.
      */
     private function enrich(array $row): object
     {
-        $ours = (float) ($row['prix_vente_cosma'] ?? 0);
+        $ours       = (float) ($row['prix_vente_cosma'] ?? 0);
+        $staleLimit = now()->subDays(self::STALE_DAYS);
 
         $competitors = collect($row['competitors'] ?? [])
             ->groupBy(fn ($c) => self::siteKey($c['website']['url'] ?? null))
             ->map(fn ($g) => $g->sortByDesc('scraped_at')->first())
-            ->map(function (array $c) use ($ours) {
-                $diff = round((float) $c['prix_ht'] - $ours, 2); // > 0 : concurrent plus cher
+            ->map(function (array $c) use ($ours, $staleLimit) {
+                $diff      = round((float) $c['prix_ht'] - $ours, 2); // > 0 : concurrent plus cher
+                $scrapedAt = $this->parseDate($c['scraped_at'] ?? null);
 
                 $c['site_key']      = self::siteKey($c['website']['url'] ?? null);
                 $c['diff']          = $diff;
                 $c['tone']          = $diff < 0 ? 'red' : ($diff > 0 ? 'green' : 'zinc');
-                $c['scraped_label'] = ! empty($c['scraped_at']) ? Carbon::parse($c['scraped_at'])->format('d/m/Y') : null;
+
+                // Date du relevé (dernière mise à jour du prix chez ce concurrent)
+                $c['scraped_label'] = $scrapedAt?->format('d/m/Y');
+                $c['scraped_full']  = $scrapedAt?->format('d/m/Y H:i');
+                // Relevé ancien => date en orange dans la vue
+                $c['is_stale']      = $scrapedAt !== null && $scrapedAt->lt($staleLimit);
 
                 return $c;
             })
