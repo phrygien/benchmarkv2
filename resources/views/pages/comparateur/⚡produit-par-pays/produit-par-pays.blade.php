@@ -102,7 +102,8 @@
         <span class="text-red-600">Rouge</span> : concurrent moins cher ·
         <span class="text-green-600">vert</span> : concurrent plus cher ·
         <span class="text-amber-600">barré</span> : contenance différente, exclu du calcul ·
-        gras : meilleur prix retenu.
+        gras : meilleur prix retenu ·
+        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours.
     </flux:text>
 
     <flux:table :paginate="$products">
@@ -194,6 +195,12 @@
                                     @if (!empty($product->best['website']['country_code']))
                                         · {{ strtoupper($product->best['website']['country_code']) }}
                                     @endif
+                                    @if (!empty($product->best['scraped_label']))
+                                        ·
+                                        <span class="{{ $product->best['is_stale'] ? 'text-amber-500' : '' }}">
+                                            {{ $product->best['scraped_label'] }}
+                                        </span>
+                                    @endif
                                 </div>
                             @else
                                 <span class="text-zinc-400">—</span>
@@ -230,11 +237,16 @@
                                         href="{{ $c['url'] }}"
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        title="{{ $c['variation'] ?: 'Contenance inconnue' }}{{ $c['volume_mismatch'] ? ' — contenance différente, non comparable' : '' }}{{ $c['scraped_label'] ? ' — relevé le ' . $c['scraped_label'] : '' }}"
+                                        title="{{ $c['variation'] ?: 'Contenance inconnue' }}{{ $c['volume_mismatch'] ? ' — contenance différente, non comparable' : '' }}{{ $c['scraped_full'] ? ' — relevé le ' . $c['scraped_full'] : '' }}"
                                         class="inline-flex flex-col items-center text-xs hover:underline {{ $toneText[$c['tone']] }}"
                                     >
                                         <span class="{{ $isBest ? 'font-bold' : 'font-semibold' }}">{{ $fmt($c['prix_ht']) }}</span>
                                         <span class="max-w-28 truncate font-normal opacity-60">{{ $c['variation'] ?: '—' }}</span>
+                                        @if ($c['scraped_label'])
+                                            <span class="text-[10px] font-normal {{ $c['is_stale'] ? 'text-amber-500' : 'opacity-50' }}">
+                                                {{ $c['scraped_label'] }}
+                                            </span>
+                                        @endif
                                     </a>
                                 @else
                                     <span class="text-zinc-300">—</span>
@@ -258,6 +270,7 @@
         <span class="text-red-600">Rouge</span> : concurrent moins cher ·
         <span class="text-green-600">vert</span> : concurrent plus cher ·
         <span class="text-amber-600">barré</span> : contenance différente, exclu du calcul ·
-        gras : meilleur prix retenu.
+        gras : meilleur prix retenu ·
+        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours.
     </flux:text>
 </div>

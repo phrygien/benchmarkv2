@@ -20,6 +20,9 @@ new class extends Component
     // Devises considérées comme des euros (le scraping renvoie "€" ou "EUR")
     private const EUR_CODES = ['EUR', '€'];
 
+    // Au-delà de ce nombre de jours, un relevé est signalé comme ancien (orange)
+    private const STALE_DAYS = 7;
+
     private const COUNTRY_LABELS = [
         'FR'    => 'France',
         'DE'    => 'Allemagne',
@@ -235,8 +238,24 @@ new class extends Component
     }
 
     /**
+     * Parse une date ISO 8601 de l'API et la convertit dans le fuseau de l'application.
+     */
+    private function parseDate(?string $value): ?Carbon
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value)->setTimezone(config('app.timezone'));
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
      * Prépare une ligne pour l'affichage : écart de prix, meilleur concurrent,
-     * détection des contenances différentes (30 ml vs 100 ml...).
+     * détection des contenances différentes (30 ml vs 100 ml...), dates de relevé.
      */
     private function enrich(array $row): object
     {
@@ -249,10 +268,13 @@ new class extends Component
             ? null
             : array_flip(array_column($this->visibleWebsites, 'key'));
 
+        $staleLimit = now()->subDays(self::STALE_DAYS);
+
         $competitors = collect($row['competitors'] ?? [])
             ->filter(fn (array $c) => $allowed === null || isset($allowed[self::siteKey($c['website']['url'] ?? null)]))
-            ->map(function (array $c) use ($ours, $volume) {
+            ->map(function (array $c) use ($ours, $volume, $staleLimit) {
                 $theirVolume = $this->volume($c['variation'] ?? null);
+                $scrapedAt   = $this->parseDate($c['scraped_at'] ?? null);
 
                 // Contenance différente => prix non comparable
                 $c['volume_mismatch'] = (bool) ($volume && $theirVolume && abs($volume - $theirVolume) > 0.01);
@@ -260,7 +282,13 @@ new class extends Component
                 $c['is_eur']          = in_array(strtoupper(trim((string) ($c['currency'] ?? ''))), self::EUR_CODES, true)
                     || trim((string) ($c['currency'] ?? '')) === '€';
                 $c['diff']            = round((float) $c['prix_ht'] - $ours, 2); // > 0 : le concurrent est plus cher
-                $c['scraped_label']   = ! empty($c['scraped_at']) ? Carbon::parse($c['scraped_at'])->format('d/m/Y') : null;
+
+                // Date du relevé (dernière mise à jour du prix chez ce concurrent)
+                $c['scraped_label']   = $scrapedAt?->format('d/m/Y');
+                $c['scraped_full']    = $scrapedAt?->format('d/m/Y H:i');
+                // Relevé ancien => signalé en orange dans la vue
+                $c['is_stale']        = $scrapedAt !== null && $scrapedAt->lt($staleLimit);
+
                 $c['tone']            = match (true) {
                     $c['volume_mismatch'] => 'amber',
                     $c['diff'] < 0        => 'red',    // concurrent moins cher que nous
