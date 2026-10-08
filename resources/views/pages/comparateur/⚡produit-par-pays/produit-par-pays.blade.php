@@ -241,12 +241,14 @@
                                         class="inline-flex flex-col items-center text-xs hover:underline {{ $toneText[$c['tone']] }}"
                                     >
                                         <span class="{{ $isBest ? 'font-bold' : 'font-semibold' }}">{{ $fmt($c['prix_ht']) }}</span>
-                                        <span class="max-w-28 truncate font-normal opacity-60">{{ $c['variation'] ?: '—' }}</span>
                                         @if ($c['scraped_label'])
-                                            <span class="text-[10px] font-normal {{ $c['is_stale'] ? 'text-amber-500' : 'opacity-50' }}">
-                                                {{ $c['scraped_label'] }}
+                                            <span class="text-[11px] font-normal {{ $c['is_stale'] ? 'text-amber-500' : 'text-zinc-500 dark:text-zinc-400' }}">
+                                                Dernière MAJ : {{ $c['scraped_label'] }}
                                             </span>
+                                        @else
+                                            <span class="text-[11px] font-normal text-zinc-400">Dernière MAJ : —</span>
                                         @endif
+                                        <span class="max-w-28 truncate font-normal opacity-60">{{ $c['variation'] ?: '—' }}</span>
                                     </a>
                                 @else
                                     <span class="text-zinc-300">—</span>
