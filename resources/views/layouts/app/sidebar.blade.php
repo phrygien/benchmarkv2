@@ -9,6 +9,7 @@
         <flux:brand href="{{ route('produits.boutiques') }}" logo="https://fluxui.dev/img/demo/logo.png" name="BenchMark Cosma" class="max-lg:hidden dark:hidden" wire:navigate />
         <flux:brand href="{{ route('produits.boutiques') }}" logo="https://fluxui.dev/img/demo/dark-mode-logo.png" name="BenchMark Cosma" class="max-lg:hidden! hidden dark:flex" wire:navigate />
         <flux:navbar class="-mb-px max-lg:hidden">
+            <flux:navbar.item href="{{ route('dashboard') }}" wire:navigate>Positionnement</flux:navbar.item>
             <flux:navbar.item href="{{ route('produits.boutiques') }}" wire:navigate>Produits boutique</flux:navbar.item>
             <flux:navbar.item href="{{ route('magento.product-pays') }}" wire:navigate>Comaparateur / Pays</flux:navbar.item>
             <flux:navbar.item href="{{ route('top.vente-par-pays') }}" wire:navigate>Top vente / Pays</flux:navbar.item>

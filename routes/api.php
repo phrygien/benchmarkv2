@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\GoogletopproduitController;
 use App\Http\Controllers\Api\AnalyticController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\PositionementController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -56,3 +57,6 @@ Route::prefix('analytics')->group(function () {
     Route::get('/products', [AnalyticController::class, 'products']);  // détail filtrable
     Route::delete('/cache', [AnalyticController::class, 'clearCache']);
 });
+
+Route::get('/positionement', [PositionementController::class, 'index']);
+Route::post('/positionement/refresh', [PositionementController::class, 'refresh']);

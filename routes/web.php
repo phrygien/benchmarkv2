@@ -14,6 +14,9 @@ Route::middleware(['auth'])->group(function () {
     // Top vente magento par pays
     Route::livewire('/top/produit-top-vente', 'pages::top.vente-par-pays')->name('top.vente-par-pays');
     Route::livewire('/top/produit-google', 'pages::top.google-product-par-pays')->name('top.google');
+
+    // Positionement
+    Route::livewire('/positionnement', 'pages::positionnement.positionement')->name('positionnement');
 });
 
 require __DIR__.'/settings.php';
