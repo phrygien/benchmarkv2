@@ -34,6 +34,8 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
 
     public int $tries = 1;
 
+    private const EUR_CODES = ['EUR', '€'];
+
     private const STATUS_TTL = 3600;
 
     /**
@@ -108,6 +110,7 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
             'PGHT',
             'Meilleur prix concurrent',
             'Meilleur concurrent',
+            'Prix du marché (moyenne)',
             'Écart moyenne marché (€)',
             'Écart moyenne marché (%)',
         ], array_values($sites));
@@ -162,6 +165,14 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
             ->groupBy(fn ($c) => self::siteKey($c['website']['url'] ?? null))
             ->map(fn ($group) => $group->sortByDesc('scraped_at')->first());
 
+        // Prix du marché : moyenne des sites en euros (devise absente = considérée en euros)
+        $eur = $perSite->filter(
+            fn ($c) => empty($c['currency'])
+                || in_array(strtoupper(trim((string) $c['currency'])), self::EUR_CODES, true)
+        );
+
+        $marketPrice = $eur->isNotEmpty() ? round((float) $eur->avg('prix_ht'), 2) : null;
+
         return [
             'base' => [
                 $row['rank'],
@@ -179,6 +190,7 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
                 $row['pght'],
                 $market['best']['prix_ht'] ?? null,
                 $market['best']['website'] ?? null,
+                $marketPrice,
                 $market['diff'] ?? null,
                 $market['diff_pct'] ?? null,
             ],
@@ -195,7 +207,7 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
      *
      * Colonnes (index 0) : 0 Rang · 1 EAN · 2 Groupe · 3 Marque · 4 Désignation · 5 Clics ·
      * 6 Impressions · 7 CTR · 8 Conversions · 9 Valeur conv. · 10 Notre prix · 11 Coût · 12 PGHT ·
-     * 13 Meilleur prix · 14 Meilleur concurrent · 15 Écart € · 16 Écart % · 17+ sites
+     * 13 Meilleur prix · 14 Meilleur concurrent · 15 Prix du marché · 16 Écart € · 17 Écart % · 18+ sites
      */
     private function writeXlsx(string $absolutePath, array $headings, array $rows): void
     {
@@ -231,7 +243,7 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
         $euro      = '#,##0.00 "€"';
         $euroGap   = '+#,##0.00 "€";-#,##0.00 "€";0.00 "€"';
         $pctGap    = '+0.00"%";-0.00"%";0.00"%"';
-        $firstSite = 17;
+        $firstSite = 18;
 
         $writer = new Writer();
         $writer->getOptions()->setColumnWidth(8, 1);
@@ -261,12 +273,13 @@ class ExportGoogleTopProduitsJob implements ShouldQueue
                     $i === 11, $i === 12 => $style($euro, $muted, false, null, CellAlignment::RIGHT),
                     $i === 13 => $style($euro, $zinc, true, null, CellAlignment::RIGHT),
                     $i === 14 => $style(null, $muted),
+                    $i === 15 => $style($euro, $zinc, true, null, CellAlignment::RIGHT), // Prix du marché
 
                     // Écarts : vert = concurrents plus chers, rouge = moins chers
-                    $i === 15, $i === 16 => match (true) {
-                        $value === null || (float) $value === 0.0 => $style($i === 15 ? $euroGap : $pctGap, $zinc, false, null, CellAlignment::CENTER),
-                        (float) $value > 0                         => $style($i === 15 ? $euroGap : $pctGap, $green, true, $greenBg, CellAlignment::CENTER),
-                        default                                    => $style($i === 15 ? $euroGap : $pctGap, $red, true, $redBg, CellAlignment::CENTER),
+                    $i === 16, $i === 17 => match (true) {
+                        $value === null || (float) $value === 0.0 => $style($i === 16 ? $euroGap : $pctGap, $zinc, false, null, CellAlignment::CENTER),
+                        (float) $value > 0                         => $style($i === 16 ? $euroGap : $pctGap, $green, true, $greenBg, CellAlignment::CENTER),
+                        default                                    => $style($i === 16 ? $euroGap : $pctGap, $red, true, $redBg, CellAlignment::CENTER),
                     },
 
                     // Colonnes concurrents : couleur selon l'écart avec notre prix, gras = meilleur prix retenu

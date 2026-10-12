@@ -14,6 +14,13 @@ use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
+/**
+ * Colonnes fixes (A..P) :
+ *  A Rang qté · B Rang CA · C EAN · D Groupe · E Marque · F Désignation
+ *  G Qté vendue · H CA · I Notre prix · J Coût · K PGHT
+ *  L Meilleur prix concurrent · M Meilleur concurrent · N Prix du marché · O Écart € · P Écart %
+ * puis une colonne par site concurrent (à partir de Q).
+ */
 class TopVentesExport extends DefaultValueBinder implements
     FromArray,
     WithHeadings,
@@ -25,11 +32,11 @@ class TopVentesExport extends DefaultValueBinder implements
     // Colonne C = EAN (texte, pour garder les zéros de tête)
     private const EAN_COLUMN = 'C';
 
-    // Colonnes montants : CA, prix, coût, PGHT, meilleur prix, écart €
-    private const MONEY_COLUMNS = ['H', 'I', 'J', 'K', 'L', 'N'];
+    // Colonnes montants : CA, prix, coût, PGHT, meilleur prix, prix du marché, écart €
+    private const MONEY_COLUMNS = ['H', 'I', 'J', 'K', 'L', 'N', 'O'];
 
-    // Première colonne « concurrent » (après les 15 colonnes fixes)
-    private const FIRST_SITE_COLUMN = 16;
+    // Première colonne « concurrent » (après les 16 colonnes fixes)
+    private const FIRST_SITE_COLUMN = 17;
 
     public function __construct(
         private array $headings,
@@ -62,7 +69,7 @@ class TopVentesExport extends DefaultValueBinder implements
             $formats[$col] = '#,##0.00';
         }
 
-        $formats['O'] = '0.00';
+        $formats['P'] = '0.00'; // Écart %
 
         for ($i = self::FIRST_SITE_COLUMN; $i <= count($this->headings); $i++) {
             $formats[Coordinate::stringFromColumnIndex($i)] = '#,##0.00';

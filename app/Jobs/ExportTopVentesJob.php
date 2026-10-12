@@ -108,6 +108,7 @@ class ExportTopVentesJob implements ShouldQueue
             'PGHT',
             'Meilleur prix concurrent',
             'Meilleur concurrent',
+            'Prix du marché (moyenne)',
             'Écart moyenne marché (€)',
             'Écart moyenne marché (%)',
         ], array_values($sites));
@@ -184,6 +185,7 @@ class ExportTopVentesJob implements ShouldQueue
                 $row['pght'],
                 $best['prix_ht'] ?? null,
                 $best['website']['name'] ?? null,
+                $avg !== null ? round($avg, 2) : null, // Prix du marché
                 $diff,
                 $pct,
             ],
@@ -197,6 +199,10 @@ class ExportTopVentesJob implements ShouldQueue
     /**
      * Écriture en flux (OpenSpout) : une ligne à la fois, mémoire quasi constante.
      * Les EAN restent des chaînes (zéros de tête conservés).
+     *
+     * Colonnes (index 0) : 0 Rang qté · 1 Rang CA · 2 EAN · 3 Groupe · 4 Marque · 5 Désignation ·
+     * 6 Qté · 7 CA · 8 Notre prix · 9 Coût · 10 PGHT · 11 Meilleur prix · 12 Meilleur concurrent ·
+     * 13 Prix du marché · 14 Écart € · 15 Écart % · 16+ sites
      */
     private function writeXlsx(string $absolutePath, array $headings, array $rows): void
     {
@@ -234,14 +240,14 @@ class ExportTopVentesJob implements ShouldQueue
         $euro    = '#,##0.00 "€"';
         $euroGap = '+#,##0.00 "€";-#,##0.00 "€";0.00 "€"';
         $pctGap  = '+0.00"%";-0.00"%";0.00"%"';
-        $firstSite = 15; // colonnes fixes : A..O, puis une colonne par site
+        $firstSite = 16; // colonnes fixes : A..P, puis une colonne par site
 
         $writer = new Writer();
         $writer->getOptions()->setColumnWidth(10, 1, 2);
         $writer->getOptions()->setColumnWidth(16, 3);
         $writer->getOptions()->setColumnWidth(22, 4, 5);
         $writer->getOptions()->setColumnWidth(45, 6);
-        $writer->getOptions()->setColumnWidth(16, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        $writer->getOptions()->setColumnWidth(16, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
 
         $writer->openToFile($absolutePath);
 
@@ -262,12 +268,13 @@ class ExportTopVentesJob implements ShouldQueue
                     $i === 7, $i === 9, $i === 10 => $style($euro, $i === 7 ? $zinc : $muted, false, null, CellAlignment::RIGHT),
                     $i === 11 => $style($euro, $zinc, true, null, CellAlignment::RIGHT),
                     $i === 12 => $style(null, $muted),
+                    $i === 13 => $style($euro, $zinc, true, null, CellAlignment::RIGHT), // Prix du marché
 
                     // Écarts : vert = concurrents plus chers, rouge = moins chers
-                    $i === 13, $i === 14 => match (true) {
-                        $value === null || (float) $value === 0.0 => $style($i === 13 ? $euroGap : $pctGap, $zinc, false, null, CellAlignment::CENTER),
-                        (float) $value > 0                         => $style($i === 13 ? $euroGap : $pctGap, $green, true, $greenBg, CellAlignment::CENTER),
-                        default                                    => $style($i === 13 ? $euroGap : $pctGap, $red, true, $redBg, CellAlignment::CENTER),
+                    $i === 14, $i === 15 => match (true) {
+                        $value === null || (float) $value === 0.0 => $style($i === 14 ? $euroGap : $pctGap, $zinc, false, null, CellAlignment::CENTER),
+                        (float) $value > 0                         => $style($i === 14 ? $euroGap : $pctGap, $green, true, $greenBg, CellAlignment::CENTER),
+                        default                                    => $style($i === 14 ? $euroGap : $pctGap, $red, true, $redBg, CellAlignment::CENTER),
                     },
 
                     // Colonnes concurrents : couleur selon l'écart avec notre prix, gras = meilleur prix retenu

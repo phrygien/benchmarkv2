@@ -15,12 +15,12 @@ use PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 /**
- * Colonnes fixes (A..Q) :
+ * Colonnes fixes (A..R) :
  *  A Rang · B EAN · C Groupe · D Marque · E Désignation
  *  F Clics · G Impressions · H CTR · I Conversions · J Valeur conv.
  *  K Notre prix · L Coût · M PGHT
- *  N Meilleur prix concurrent · O Meilleur concurrent · P Écart € · Q Écart %
- * puis une colonne par site concurrent (à partir de R).
+ *  N Meilleur prix concurrent · O Meilleur concurrent · P Prix du marché · Q Écart € · R Écart %
+ * puis une colonne par site concurrent (à partir de S).
  */
 class GoogleTopProduitsExport extends DefaultValueBinder implements
     FromArray,
@@ -33,11 +33,11 @@ class GoogleTopProduitsExport extends DefaultValueBinder implements
     // Colonne B = EAN (texte, pour garder les zéros de tête)
     private const EAN_COLUMN = 'B';
 
-    // Colonnes montants : valeur conv., prix, coût, PGHT, meilleur prix, écart €
-    private const MONEY_COLUMNS = ['J', 'K', 'L', 'M', 'N', 'P'];
+    // Colonnes montants : valeur conv., prix, coût, PGHT, meilleur prix, prix du marché, écart €
+    private const MONEY_COLUMNS = ['J', 'K', 'L', 'M', 'N', 'P', 'Q'];
 
-    // Première colonne « concurrent » (après les 17 colonnes fixes)
-    private const FIRST_SITE_COLUMN = 18;
+    // Première colonne « concurrent » (après les 18 colonnes fixes)
+    private const FIRST_SITE_COLUMN = 19;
 
     public function __construct(
         private array $headings,
@@ -70,7 +70,7 @@ class GoogleTopProduitsExport extends DefaultValueBinder implements
             'G' => '#,##0',
             'H' => '0.00%',      // CTR stocké en ratio (0.034 = 3,40 %)
             'I' => '#,##0.00',
-            'Q' => '0.00',
+            'R' => '0.00',       // Écart %
         ];
 
         foreach (self::MONEY_COLUMNS as $col) {
