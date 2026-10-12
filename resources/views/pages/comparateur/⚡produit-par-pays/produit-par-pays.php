@@ -255,7 +255,8 @@ new class extends Component
 
     /**
      * Prépare une ligne pour l'affichage : écart de prix, meilleur concurrent,
-     * détection des contenances différentes (30 ml vs 100 ml...), dates de relevé.
+     * prix du marché, détection des contenances différentes (30 ml vs 100 ml...),
+     * dates de relevé.
      */
     private function enrich(array $row): object
     {
@@ -263,7 +264,7 @@ new class extends Component
         $volume = $this->volume($row['option_value'] ?? null) ?? $this->volume($row['title'] ?? null);
 
         // Onglet actif : on ne garde que les concurrents des sites visibles
-        // (le "meilleur concurrent" et l'écart suivent donc le pays choisi)
+        // (le "meilleur concurrent", le prix du marché et l'écart suivent donc le pays choisi)
         $allowed = $this->country === 'all'
             ? null
             : array_flip(array_column($this->visibleWebsites, 'key'));
@@ -313,6 +314,23 @@ new class extends Component
             ->groupBy(fn ($c) => self::siteKey($c['website']['url'] ?? null))
             ->map(fn ($group) => $group->sortByDesc('scraped_at')->first())
             ->all();
+
+        // Prix du marché : moyenne des prix concurrents comparables (même contenance, en euros),
+        // un relevé par site. Pour la médiane, remplacer avg() par median().
+        $comparable = collect($product->by_site)
+            ->where('volume_mismatch', false)
+            ->where('is_eur', true)
+            ->pluck('prix_ht')
+            ->map(fn ($p) => (float) $p)
+            ->filter(fn ($p) => $p > 0);
+
+        $product->market_price   = $comparable->isNotEmpty() ? round($comparable->avg(), 2) : null;
+        $product->market_count   = $comparable->count();
+        // > 0 : nous sommes plus chers que le marché
+        $product->market_gap_pct = $product->market_price
+            ? round(($ours / $product->market_price - 1) * 100, 1)
+            : null;
+
         $product->best_key    = $best ? self::siteKey($best['website']['url'] ?? null) : null;
         $product->best        = $best;
         $product->gap         = $best ? round($ours - (float) $best['prix_ht'], 2) : null; // > 0 : nous sommes plus chers

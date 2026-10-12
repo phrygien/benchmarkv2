@@ -128,7 +128,8 @@
         <span class="text-green-600">Vert</span> : concurrents plus chers ·
         <span class="text-red-600">rouge</span> : concurrents moins chers ·
         gras : meilleur prix concurrent ·
-        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours.
+        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours ·
+        Prix du marché = moyenne des prix des concurrents du pays affiché.
     </flux:text>
 
     <div wire:loading.class="opacity-50" wire:target="country,sort,groupe,dateFrom,dateTo,perPage,gotoPage,nextPage,previousPage,setPage">
@@ -140,6 +141,7 @@
                 <flux:table.column align="end">CA</flux:table.column>
                 <flux:table.column align="end">Notre prix</flux:table.column>
                 <flux:table.column>Meilleur concurrent</flux:table.column>
+                <flux:table.column align="end">Prix du marché</flux:table.column>
                 <flux:table.column>Écart marché</flux:table.column>
                 @foreach ($this->visibleWebsites as $site)
                     <flux:table.column align="center" class="whitespace-nowrap">{{ $site['name'] }}</flux:table.column>
@@ -150,7 +152,7 @@
                 @if (! $loaded)
                     @foreach (range(1, min($perPage, 25)) as $i)
                         <flux:table.row :key="'skeleton-' . $i">
-                            @foreach (range(1, 7 + count($this->visibleWebsites)) as $j)
+                            @foreach (range(1, 8 + count($this->visibleWebsites)) as $j)
                                 <flux:table.cell>
                                     <div class="h-5 w-full animate-pulse rounded bg-zinc-200 dark:bg-zinc-700"></div>
                                 </flux:table.cell>
@@ -211,6 +213,18 @@
                                 @if (! empty($product->market['best']))
                                     <div class="font-medium">{{ $fmt($product->market['best']['prix_ht']) }}</div>
                                     <div class="text-xs text-zinc-500">{{ $product->market['best']['website'] }}</div>
+                                @else
+                                    <span class="text-zinc-400">—</span>
+                                @endif
+                            </flux:table.cell>
+
+                            {{-- Prix du marché (moyenne des concurrents) --}}
+                            <flux:table.cell align="end" class="whitespace-nowrap">
+                                @if ($product->market_price !== null)
+                                    <div class="font-medium">{{ $fmt($product->market_price) }}</div>
+                                    <div class="text-xs text-zinc-500">
+                                        moy. de {{ $product->market_count }} site{{ $product->market_count > 1 ? 's' : '' }}
+                                    </div>
                                 @else
                                     <span class="text-zinc-400">—</span>
                                 @endif
@@ -277,7 +291,7 @@
                         </flux:table.row>
                     @empty
                         <flux:table.row>
-                            <flux:table.cell colspan="{{ 7 + count($this->visibleWebsites) }}" class="text-center text-zinc-500">
+                            <flux:table.cell colspan="{{ 8 + count($this->visibleWebsites) }}" class="text-center text-zinc-500">
                                 Aucune vente trouvée pour ces filtres.
                             </flux:table.cell>
                         </flux:table.row>

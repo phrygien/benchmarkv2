@@ -3,7 +3,7 @@
     $loadingTargets = 'search,perPage,onlyMatched,country,gotoPage,nextPage,previousPage,setPage';
 
     // Nombre de lignes skeleton (inutile d'en rendre 100)
-    $skeletonRows = min($perPage, 10);
+    $skeletonRows = min($perPage, 30);
 
     // Couleur du texte seulement (plus de cadre ni de fond)
     $toneText = [
@@ -103,7 +103,8 @@
         <span class="text-green-600">vert</span> : concurrent plus cher ·
         <span class="text-amber-600">barré</span> : contenance différente, exclu du calcul ·
         gras : meilleur prix retenu ·
-        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours.
+        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours ·
+        Prix du marché = moyenne des prix concurrents comparables (% = notre écart vs marché).
     </flux:text>
 
     <flux:table :paginate="$products">
@@ -111,6 +112,7 @@
             <flux:table.column>Produit</flux:table.column>
             <flux:table.column align="end">Notre prix</flux:table.column>
             <flux:table.column>Meilleur concurrent</flux:table.column>
+            <flux:table.column align="end">Prix du marché</flux:table.column>
             <flux:table.column>Écart</flux:table.column>
             @foreach ($this->visibleWebsites as $site)
                 <flux:table.column align="center" class="whitespace-nowrap">
@@ -139,6 +141,9 @@
                     </flux:table.cell>
                     <flux:table.cell>
                         <div class="h-5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700"></div>
+                    </flux:table.cell>
+                    <flux:table.cell>
+                        <div class="ml-auto h-5 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700"></div>
                     </flux:table.cell>
                     <flux:table.cell>
                         <div class="h-5 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700"></div>
@@ -207,6 +212,24 @@
                             @endif
                         </flux:table.cell>
 
+                        {{-- Prix du marché --}}
+                        <flux:table.cell align="end" class="whitespace-nowrap">
+                            @if ($product->market_price !== null)
+                                <div class="font-medium">{{ $fmt($product->market_price) }}</div>
+                                <div class="text-xs text-zinc-500">
+                                    moy. de {{ $product->market_count }} site{{ $product->market_count > 1 ? 's' : '' }}
+                                    @if ($product->market_gap_pct !== null)
+                                        ·
+                                        <span class="{{ $product->market_gap_pct > 0 ? 'text-red-600 dark:text-red-400' : ($product->market_gap_pct < 0 ? 'text-green-600 dark:text-green-400' : '') }}">
+                                            {{ $product->market_gap_pct > 0 ? '+' : '' }}{{ $product->market_gap_pct }} %
+                                        </span>
+                                    @endif
+                                </div>
+                            @else
+                                <span class="text-zinc-400">—</span>
+                            @endif
+                        </flux:table.cell>
+
                         {{-- Écart --}}
                         <flux:table.cell class="py-0 whitespace-nowrap">
                             @if ($product->gap === null)
@@ -258,7 +281,7 @@
                     </flux:table.row>
                 @empty
                     <flux:table.row wire:loading.class="hidden" wire:target="{{ $loadingTargets }}">
-                        <flux:table.cell colspan="{{ 4 + count($this->visibleWebsites) }}" class="text-center text-zinc-500">
+                        <flux:table.cell colspan="{{ 5 + count($this->visibleWebsites) }}" class="text-center text-zinc-500">
                             Aucun produit trouvé.
                         </flux:table.cell>
                     </flux:table.row>
@@ -273,6 +296,7 @@
         <span class="text-green-600">vert</span> : concurrent plus cher ·
         <span class="text-amber-600">barré</span> : contenance différente, exclu du calcul ·
         gras : meilleur prix retenu ·
-        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours.
+        <span class="text-amber-500">date orange</span> : relevé de plus de 7 jours ·
+        Prix du marché = moyenne des prix concurrents comparables (% = notre écart vs marché).
     </flux:text>
 </div>

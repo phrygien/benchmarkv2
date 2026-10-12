@@ -304,7 +304,7 @@ new class extends Component
 
     /**
      * Prépare une ligne : un relevé par site (le plus récent), ton selon l'écart,
-     * date de dernière mise à jour du prix.
+     * date de dernière mise à jour du prix, prix du marché.
      */
     private function enrich(array $row): object
     {
@@ -337,6 +337,17 @@ new class extends Component
         $product = (object) $row;
         $product->competitors = $competitors->all();
         $product->by_site     = $competitors->keyBy('site_key')->all();
+
+        // Prix du marché : moyenne des prix concurrents (un relevé par site, pays de l'onglet).
+        // Indépendant de notre prix : s'affiche même si le produit est absent de Magento.
+        // Pour la médiane, remplacer avg() par median() (et "moy." par "méd." dans la vue).
+        $prices = $competitors
+            ->pluck('prix_ht')
+            ->map(fn ($p) => (float) $p)
+            ->filter(fn ($p) => $p > 0);
+
+        $product->market_price = $prices->isNotEmpty() ? round($prices->avg(), 2) : null;
+        $product->market_count = $prices->count();
 
         // Pas d'image côté Merchant : on prend celle du premier concurrent qui en a une
         $product->image_url = $row['image_url']
