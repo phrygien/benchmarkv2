@@ -10,42 +10,40 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Jeu de données COMPACT pour l'analyse de positionnement prix :
- * un enregistrement par produit boutique présent chez au moins un concurrent,
- * avec uniquement les relevés comparables (euros, même contenance).
+ * un enregistrement par produit boutique MATCHÉ (only_matched=1) présent chez au moins
+ * un concurrent. Rapprochement par EAN (déjà fait par l'API comparateur) : on compare
+ * seulement notre prix (price / special_price) au prix_ht du concurrent. Aucune vérification
+ * de devise (tout est en euros) ni de variation / contenance. 1 relevé par site et par produit.
  *
  * ANTI-TIMEOUT : la requête HTTP ne construit JAMAIS le jeu de données.
  *  - la construction (longue) tourne dans un Job (queue) ou via `php artisan positionnement:build`
  *  - la requête lit seulement le cache (instantané)
- *  - cache "stale-while-revalidate" : si les données ont plus de FRESH_TTL, on les sert quand
- *    même et on relance une reconstruction en arrière-plan
+ *  - cache "stale-while-revalidate" : au-delà de FRESH_TTL, on sert les données et on
+ *    relance une reconstruction en arrière-plan
  *  - un verrou empêche deux constructions simultanées
  */
 class PositionnementPrixService
 {
-    public const CACHE_KEY  = 'positionnement-prix:dataset:v2';
+    public const CACHE_KEY  = 'positionnement-prix:dataset:v3'; // v3 : nouvelle structure
     public const QUEUED_KEY = 'positionnement-prix:queued';
     public const LOCK_KEY   = 'positionnement-prix:build-lock';
     public const ERROR_KEY  = 'positionnement-prix:last-error';
 
-    public const FRESH_TTL = 1800;   // 30 min : au-delà, on relance une reconstruction
-    public const KEEP_TTL  = 86400;  // 24 h : durée de conservation (données "stale" servies)
+    public const FRESH_TTL = 1800;   // 30 min
+    public const KEEP_TTL  = 86400;  // 24 h
 
     private const PER_PAGE = 100; // max autorisé par Boutiqueproductservice::rules()
-
-    // Le scraping renvoie "€", "EUR" ou parfois "E"
-    private const EUR_CODES = ['EUR', '€', 'E'];
 
     private const TLD_COUNTRIES = [
         'fr' => 'FR', 'de' => 'DE', 'be' => 'BE', 'nl' => 'NL', 'it' => 'IT',
         'es' => 'ES', 'pt' => 'PT', 'ch' => 'CH', 'at' => 'AT', 'lu' => 'LU', 'pl' => 'PL',
     ];
 
+    /** Compteurs de qualité de la dernière construction */
+    private array $stats = [];
+
     /**
-     * Lit le cache uniquement (jamais de construction inline).
-     * Si absent ou périmé, déclenche une reconstruction en arrière-plan.
-     * Retourne built_at = null et rows = [] tant que rien n'est prêt.
-     *
-     * @return array{built_at: int|null, rows: array}
+     * @return array{built_at: int|null, rows: array, stats?: array}
      */
     public function dataset(): array
     {
@@ -54,7 +52,7 @@ class PositionnementPrixService
         if (! is_array($data)) {
             $this->dispatchRefresh();
 
-            return ['built_at' => null, 'rows' => []];
+            return ['built_at' => null, 'rows' => [], 'stats' => []];
         }
 
         if (time() - (int) ($data['built_at'] ?? 0) > self::FRESH_TTL) {
@@ -69,17 +67,12 @@ class PositionnementPrixService
         return $builtAt === null || (time() - $builtAt) > self::FRESH_TTL;
     }
 
-    /**
-     * Demande une reconstruction en arrière-plan (sans bloquer la requête).
-     * Retourne false si une reconstruction est déjà demandée / en cours.
-     */
     public function dispatchRefresh(bool $force = false): bool
     {
         if ($force) {
             Cache::forget(self::QUEUED_KEY);
         }
 
-        // Anti-doublon : un seul job en file à la fois
         if (! Cache::add(self::QUEUED_KEY, 1, 900)) {
             return false;
         }
@@ -89,10 +82,6 @@ class PositionnementPrixService
         return true;
     }
 
-    /**
-     * Compatibilité (ex. bouton "Actualiser" Livewire) : relance en arrière-plan,
-     * retourne immédiatement les données actuelles (éventuellement vides).
-     */
     public function refresh(): array
     {
         $this->dispatchRefresh(true);
@@ -100,9 +89,6 @@ class PositionnementPrixService
         return $this->dataset();
     }
 
-    /**
-     * Dernière erreur d'un job de construction (effacée dès qu'une construction réussit).
-     */
     public function lastError(): ?string
     {
         $e = Cache::get(self::ERROR_KEY);
@@ -115,19 +101,12 @@ class PositionnementPrixService
         Cache::put(self::ERROR_KEY, $message, 3600);
     }
 
-    /**
-     * Libère un verrou resté bloqué (ex. commande interrompue par Ctrl+C).
-     */
     public function forceUnlock(): void
     {
         Cache::lock(self::LOCK_KEY)->forceRelease();
         Cache::forget(self::QUEUED_KEY);
     }
 
-    /**
-     * Construit et stocke le jeu de données. À appeler depuis le Job / la commande uniquement.
-     * Retourne null si une autre construction est déjà en cours.
-     */
     public function buildAndStore(): ?array
     {
         $lock = Cache::lock(self::LOCK_KEY, 1800);
@@ -141,7 +120,6 @@ class PositionnementPrixService
         try {
             $data = $this->build();
 
-            // On écrase seulement à la fin : les anciennes données restent servies pendant le calcul
             Cache::put(self::CACHE_KEY, $data, self::KEEP_TTL);
             Cache::forget(self::ERROR_KEY);
 
@@ -152,17 +130,22 @@ class PositionnementPrixService
         }
     }
 
-    /**
-     * Parcourt toutes les pages de /api/comparateur (only_matched=1) en appelant
-     * directement le contrôleur, puis ne garde que l'essentiel de chaque produit.
-     */
     private function build(): array
     {
         @set_time_limit(0);
         @ini_set('memory_limit', '512M');
 
-        // Évite que le log de requêtes SQL grossisse à chaque page (fuite mémoire classique)
         DB::connection()->disableQueryLog();
+
+        $this->stats = [
+            'received'      => 0, // produits matchés reçus de l'API
+            'kept'          => 0, // produits exploitables
+            'no_price'      => 0, // notre prix absent / nul
+            'no_competitor' => 0, // aucun relevé comparable
+            'rel_total'     => 0, // relevés concurrents reçus
+            'rel_price'     => 0, // relevés sans prix
+            'rel_dupes'     => 0, // doublons (même site, même produit)
+        ];
 
         $rows = [];
         $page = 1;
@@ -170,12 +153,14 @@ class PositionnementPrixService
 
         do {
             $json = $this->fetchPage($page);
-
             $last = (int) ($json['meta']['last_page'] ?? 1);
 
             foreach ($json['data'] as $row) {
+                $this->stats['received']++;
+
                 if ($compact = $this->compact($row)) {
                     $rows[] = $compact;
+                    $this->stats['kept']++;
                 }
             }
 
@@ -190,12 +175,10 @@ class PositionnementPrixService
         return [
             'built_at' => time(),
             'rows'     => $rows,
+            'stats'    => $this->stats,
         ];
     }
 
-    /**
-     * Une page de l'API comparateur, avec 2 nouvelles tentatives en cas d'erreur transitoire.
-     */
     private function fetchPage(int $page): array
     {
         $attempts = 0;
@@ -223,77 +206,97 @@ class PositionnementPrixService
                 );
             }
 
-            sleep($attempts); // 1 s puis 2 s
+            sleep($attempts);
         }
     }
 
     /**
      * Réduit un produit de l'API à ce qui sert à l'analyse.
-     * Retourne null si le produit n'a aucun relevé concurrent comparable.
+     * - garde notre prix catalogue ET notre prix effectif (promo)
+     * - compare uniquement prix_ht du concurrent à notre prix (EAN déjà apparié par l'API)
+     * - garde UN relevé par site (le plus récent, puis le moins cher)
      */
     private function compact(array $row): ?array
     {
-        // Prix réellement pratiqué : promo si elle existe, sinon prix catalogue
-        $ours = (float) ($row['special_price'] ?? 0);
+        $regular = (float) ($row['price'] ?? 0);
+        $special = (float) ($row['special_price'] ?? 0);
+
+        // Prix réellement pratiqué : promo valide (> 0 et < prix catalogue) sinon catalogue
+        $onPromo = $special > 0 && ($regular <= 0 || $special < $regular);
+        $ours    = $onPromo ? $special : $regular;
 
         if ($ours <= 0) {
-            $ours = (float) ($row['price'] ?? 0);
-        }
+            $this->stats['no_price']++;
 
-        if ($ours <= 0) {
             return null;
         }
 
-        $volume = $this->volume($row['option_value'] ?? null) ?? $this->volume($row['title'] ?? null);
-
-        $competitors = [];
+        $bySite = [];
 
         foreach ($row['competitors'] ?? [] as $c) {
+            $this->stats['rel_total']++;
+
             $price = (float) ($c['prix_ht'] ?? 0);
 
             if ($price <= 0) {
-                continue;
-            }
-
-            // Euros uniquement
-            $currency = strtoupper(trim((string) ($c['currency'] ?? '')));
-
-            if (! in_array($currency, self::EUR_CODES, true)) {
-                continue;
-            }
-
-            // Contenance différente => non comparable
-            $theirVolume = $this->volume($c['variation'] ?? null);
-
-            if ($volume && $theirVolume && abs($volume - $theirVolume) > 0.01) {
+                $this->stats['rel_price']++;
                 continue;
             }
 
             $url     = $c['website']['url'] ?? null;
+            $name    = (string) ($c['website']['name'] ?? '?');
             $country = strtoupper(trim((string) ($c['website']['country_code'] ?? '')))
                 ?: ($this->countryFromUrl($url) ?? 'OTHER');
 
-            $competitors[] = [
-                'key'     => $this->siteKey($url),
-                'name'    => (string) ($c['website']['name'] ?? '?'),
+            $entry = [
+                'key'     => $this->siteKey($url) ?: strtolower($name),
+                'name'    => $name,
                 'country' => $country,
                 'price'   => $price,
                 'ts'      => ! empty($c['scraped_at']) ? (strtotime($c['scraped_at']) ?: null) : null,
             ];
+
+            $prev = $bySite[$entry['key']] ?? null;
+
+            if ($prev === null) {
+                $bySite[$entry['key']] = $entry;
+                continue;
+            }
+
+            $this->stats['rel_dupes']++;
+
+            if ($this->better($entry, $prev)) {
+                $bySite[$entry['key']] = $entry;
+            }
         }
 
-        if (empty($competitors)) {
+        if (empty($bySite)) {
+            $this->stats['no_competitor']++;
+
             return null;
         }
 
         return [
             'sku'         => (string) ($row['sku'] ?? ''),
+            'ean'         => (string) ($row['ean'] ?? $row['barcode'] ?? $row['gtin'] ?? ''),
             'title'       => (string) ($row['title'] ?? ''),
             'vendor'      => trim((string) ($row['vendor'] ?? '')) ?: 'Inconnue',
             'type'        => trim((string) ($row['type'] ?? '')) ?: 'Autre',
-            'ours'        => $ours,
-            'competitors' => $competitors,
+            'ours'        => $ours,      // prix effectif (promo si elle existe)
+            'regular'     => $regular > 0 ? $regular : $ours, // prix catalogue
+            'on_promo'    => $onPromo,
+            'competitors' => array_values($bySite),
         ];
+    }
+
+    /** Un relevé est "meilleur" : plus récent, puis moins cher. */
+    private function better(array $a, array $b): bool
+    {
+        if (($a['ts'] ?? 0) !== ($b['ts'] ?? 0)) {
+            return ($a['ts'] ?? 0) > ($b['ts'] ?? 0);
+        }
+
+        return $a['price'] < $b['price'];
     }
 
     private function siteKey(?string $url): string
@@ -313,14 +316,5 @@ class PositionnementPrixService
         }
 
         return self::TLD_COUNTRIES[strtolower(substr(strrchr($host, '.') ?: '', 1))] ?? null;
-    }
-
-    private function volume(?string $text): ?float
-    {
-        if ($text && preg_match('/(\d+(?:[.,]\d+)?)\s*ml/i', $text, $m)) {
-            return (float) str_replace(',', '.', $m[1]);
-        }
-
-        return null;
     }
 }

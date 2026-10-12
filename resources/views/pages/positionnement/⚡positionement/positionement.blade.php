@@ -5,7 +5,6 @@
     $pct1 = fn ($n) => number_format((float) $n, 1, ',', ' ') . ' %';
     $sgn  = fn ($n) => ($n > 0 ? '+' : ($n < 0 ? '−' : '')) . number_format(abs((float) $n), 1, ',', ' ') . ' %';
 
-    // Couleur de l'écart : rouge si nous sommes plus chers, vert si moins chers
     $gapTone = fn ($n) => $n > 0.5
         ? 'text-red-600 dark:text-red-400'
         : ($n < -0.5 ? 'text-green-600 dark:text-green-400' : 'text-zinc-600 dark:text-zinc-300');
@@ -19,11 +18,13 @@
     // Évalué ici, avant de lire $this->error (écrite pendant le calcul de la propriété computed)
     $a        = $this->analysis;
     $g        = $a['global'];
+    $as       = $a['stats'];
+    $bs       = $this->dataset['stats'] ?? [];
     $products = $this->products;
     $building = $this->isBuilding;
     $stale    = $this->isStale;
+    $head     = (float) ($g['median'] ?? 0);
 
-    // Rafraîchissement automatique tant qu'un calcul est en cours
     $polling  = $building || $refreshing;
 @endphp
 
@@ -35,7 +36,7 @@
                 @if ($building)
                     Calcul initial en cours…
                 @else
-                    {{ $int($g['n']) }} produit(s) comparé(s)
+                    {{ $int($g['n']) }} produit(s) matché(s) comparé(s)
                     @if ($this->builtAt)
                         · données calculées le {{ $this->builtAt }}
                     @endif
@@ -60,19 +61,9 @@
                 @endforeach
             </flux:select>
 
-            <flux:select wire:model.live="maxAge" label="Fraîcheur des relevés" class="w-48">
-                <flux:select.option value="0">Tous les relevés</flux:select.option>
-                <flux:select.option value="7">Moins de 7 jours</flux:select.option>
-                <flux:select.option value="14">Moins de 14 jours</flux:select.option>
-                <flux:select.option value="30">Moins de 30 jours</flux:select.option>
-                <flux:select.option value="60">Moins de 60 jours</flux:select.option>
-            </flux:select>
-
-            <flux:select wire:model.live="tolerance" label="Même prix si écart ≤" class="w-40">
-                <flux:select.option value="0">0 %</flux:select.option>
-                <flux:select.option value="0.5">0,5 %</flux:select.option>
-                <flux:select.option value="1">1 %</flux:select.option>
-                <flux:select.option value="2">2 %</flux:select.option>
+            <flux:select wire:model.live="ourPrice" label="Notre prix" class="w-52">
+                <flux:select.option value="effective">Prix pratiqué (promo incluse)</flux:select.option>
+                <flux:select.option value="regular">Prix catalogue (hors promo)</flux:select.option>
             </flux:select>
 
             <flux:button
@@ -92,7 +83,48 @@
         </div>
     </div>
 
-    {{-- Onglets par pays (pays des sites concurrents) --}}
+    {{-- Fiabilité de la comparaison --}}
+    <flux:card class="space-y-3">
+        <flux:heading>Fiabilité de la comparaison</flux:heading>
+
+        <div class="flex flex-wrap items-end gap-4">
+            <flux:select wire:model.live="maxAge" label="Fraîcheur des relevés" class="w-48">
+                <flux:select.option value="0">Tous les relevés</flux:select.option>
+                <flux:select.option value="7">Moins de 7 jours</flux:select.option>
+                <flux:select.option value="14">Moins de 14 jours</flux:select.option>
+                <flux:select.option value="30">Moins de 30 jours</flux:select.option>
+                <flux:select.option value="60">Moins de 60 jours</flux:select.option>
+            </flux:select>
+
+            <flux:select wire:model.live="minSites" label="Concurrents minimum" class="w-44">
+                <flux:select.option value="1">1 (tous)</flux:select.option>
+                <flux:select.option value="2">2 ou plus</flux:select.option>
+                <flux:select.option value="3">3 ou plus</flux:select.option>
+                <flux:select.option value="5">5 ou plus</flux:select.option>
+            </flux:select>
+
+            <flux:select wire:model.live="tolerance" label="Même prix si écart ≤" class="w-40">
+                <flux:select.option value="0">0 %</flux:select.option>
+                <flux:select.option value="0.5">0,5 %</flux:select.option>
+                <flux:select.option value="1">1 %</flux:select.option>
+                <flux:select.option value="2">2 %</flux:select.option>
+            </flux:select>
+
+            <flux:select wire:model.live="outlierPct" label="« À vérifier » si écart >" class="w-44">
+                <flux:select.option value="0">Désactivé</flux:select.option>
+                <flux:select.option value="30">± 30 %</flux:select.option>
+                <flux:select.option value="50">± 50 %</flux:select.option>
+                <flux:select.option value="100">± 100 %</flux:select.option>
+            </flux:select>
+        </div>
+
+        <div class="flex flex-wrap gap-x-6 gap-y-2">
+            <flux:switch wire:model.live="cleanOutliers" label="Écarter les relevés aberrants" />
+            <flux:switch wire:model.live="excludeSuspects" label="Exclure les produits « à vérifier » des stats" />
+        </div>
+    </flux:card>
+
+    {{-- Onglets par pays --}}
     <div class="flex flex-wrap gap-1 border-b border-zinc-200 dark:border-zinc-700" role="tablist">
         @foreach ($this->countries as $code => $label)
             @php $active = $country === $code; @endphp
@@ -126,16 +158,12 @@
         </flux:callout>
     @endif
 
-    <flux:callout variant="warning" icon="exclamation-triangle" heading="À vérifier avant toute décision">
-        Cette analyse repose sur les prix relevés sur les sites concurrents (scraping) enregistrés dans notre base.
-        Ces données peuvent contenir des erreurs : produit ou contenance différents, EAN mal associé, relevé ancien.
-        Vérifiez les écarts importants (surtout au-delà de ± 50 %) avant de modifier un prix.
-    </flux:callout>
-
     <flux:text size="sm" class="text-zinc-500">
-        Écart % = notre prix (champ « price », sans promo ni taxe) ÷ prix du marché − 1, en euros et à contenance identique, sur les sites du pays choisi.
-        <span class="text-red-600">+ rouge</span> : nous vendons plus cher que le marché ·
-        <span class="text-green-600">− vert</span> : nous vendons moins cher que le marché.
+        Analyse limitée aux produits <strong>matchés par EAN</strong> avec au moins un concurrent.
+        Écart % = notre prix ({{ $ourPrice === 'regular' ? 'catalogue, hors promo' : 'pratiqué, promo incluse' }}) ÷ prix concurrent (prix_ht) − 1,
+        sur les sites du pays choisi. Aucune vérification de devise ni de variation.
+        <span class="text-red-600">+ rouge</span> : nous sommes plus chers ·
+        <span class="text-green-600">− vert</span> : nous sommes moins chers.
     </flux:text>
 
     @if ($building)
@@ -156,34 +184,52 @@
         <div class="h-64 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700"></div>
     @elseif ($g['n'] === 0)
         <flux:callout icon="information-circle" heading="Aucune donnée pour ces filtres">
-            Aucun produit n'a de prix concurrent comparable avec ces filtres (pays, marque, fraîcheur).
+            Aucun produit matché n'a de prix concurrent comparable avec ces filtres
+            (pays, marque, fraîcheur, nombre de concurrents).
+            @if ($as['suspects'] > 0 && $excludeSuspects)
+                {{ $int($as['suspects']) }} produit(s) « à vérifier » sont exclus des statistiques.
+            @endif
         </flux:callout>
     @else
-        <div wire:loading.class="opacity-50" wire:target="country,reference,vendor,maxAge,tolerance,position,order,search,perPage,gotoPage,nextPage,previousPage,setPage">
+        <div wire:loading.class="opacity-50" wire:target="country,reference,vendor,maxAge,tolerance,ourPrice,minSites,cleanOutliers,outlierPct,excludeSuspects,position,order,search,perPage,gotoPage,nextPage,previousPage,setPage">
             <div class="space-y-6">
 
-                {{-- Réponse directe : combien plus cher / moins cher que le marché --}}
-                <flux:card class="space-y-1">
-                    <flux:text size="sm">En moyenne, par rapport à {{ $refLabel }} des concurrents</flux:text>
+                {{-- Qualité des données --}}
+                <flux:text size="sm" class="text-zinc-500">
+                    @if (! empty($bs))
+                        {{ $int($bs['kept'] ?? 0) }} produits matchés exploitables sur {{ $int($bs['received'] ?? 0) }} ·
+                        {{ $int($bs['rel_dupes'] ?? 0) }} doublon(s) de relevé écarté(s) ·
+                    @endif
+                    {{ $int($as['removed']) }} relevé(s) aberrant(s) ignoré(s) ·
+                    {{ $int($as['suspects']) }} produit(s) « à vérifier »
+                    @if ($as['too_few'] > 0)
+                        · {{ $int($as['too_few']) }} sans assez de concurrents
+                    @endif
+                </flux:text>
 
-                    <div class="text-3xl font-semibold {{ $gapTone($g['avg']) }}">
-                        @if ($g['avg'] > 0.05)
-                            Nous vendons {{ $pct1(abs($g['avg'])) }} plus cher
-                        @elseif ($g['avg'] < -0.05)
-                            Nous vendons {{ $pct1(abs($g['avg'])) }} moins cher
+                {{-- Réponse directe --}}
+                <flux:card class="space-y-1">
+                    <flux:text size="sm">Écart médian par rapport à {{ $refLabel }} des concurrents</flux:text>
+
+                    <div class="text-3xl font-semibold {{ $gapTone($head) }}">
+                        @if ($head > 0.05)
+                            Nous vendons {{ $pct1(abs($head)) }} plus cher
+                        @elseif ($head < -0.05)
+                            Nous vendons {{ $pct1(abs($head)) }} moins cher
                         @else
                             Nous sommes alignés sur le marché
                         @endif
                     </div>
 
                     <flux:text size="sm">
-                        Médiane des écarts : {{ $sgn($g['median'] ?? 0) }} ·
+                        Écart moyen : {{ $sgn($g['avg']) }} ·
                         sur {{ $int($g['n']) }} produit(s)
+                        (la médiane est moins sensible aux erreurs de données que la moyenne)
                     </flux:text>
                 </flux:card>
 
                 {{-- Répartition --}}
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <flux:card class="space-y-1">
                         <flux:text size="sm">Nous vendons moins cher</flux:text>
                         <div class="text-2xl font-semibold text-green-600 dark:text-green-400">{{ $pct1($pct($g['cheaper'], $g['n'])) }}</div>
@@ -201,6 +247,34 @@
                         <div class="text-2xl font-semibold text-red-600 dark:text-red-400">{{ $pct1($pct($g['pricier'], $g['n'])) }}</div>
                         <flux:text size="sm">{{ $int($g['pricier']) }} produit(s)</flux:text>
                     </flux:card>
+
+                    <flux:card class="space-y-1">
+                        <flux:text size="sm">Nous sommes le moins cher</flux:text>
+                        <div class="text-2xl font-semibold">{{ $pct1($pct($g['best'], $g['n'])) }}</div>
+                        <flux:text size="sm">{{ $int($g['best']) }} produit(s) au meilleur prix du marché</flux:text>
+                    </flux:card>
+                </div>
+
+                {{-- Histogramme des écarts --}}
+                <div class="space-y-2">
+                    <flux:heading size="lg">Répartition des écarts</flux:heading>
+
+                    @php $maxBin = max(1, max(array_column($a['histogram'], 'n'))); @endphp
+
+                    <div class="space-y-1">
+                        @foreach ($a['histogram'] as $bin)
+                            <div class="flex items-center gap-3 text-xs" wire:key="bin-{{ $loop->index }}">
+                                <div class="w-28 shrink-0 text-zinc-500">{{ $bin['label'] }}</div>
+                                <div class="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+                                    <div
+                                        class="h-3 rounded {{ ['green' => 'bg-green-500', 'red' => 'bg-red-500', 'zinc' => 'bg-zinc-400'][$bin['tone']] }}"
+                                        style="width: {{ $bin['n'] / $maxBin * 100 }}%"
+                                    ></div>
+                                </div>
+                                <div class="w-14 text-right tabular-nums">{{ $int($bin['n']) }}</div>
+                            </div>
+                        @endforeach
+                    </div>
                 </div>
 
                 {{-- Détail produit par produit --}}
@@ -211,22 +285,24 @@
                         <flux:input
                             wire:model.live.debounce.400ms="search"
                             icon="magnifying-glass"
-                            placeholder="Rechercher (nom, SKU...)"
+                            placeholder="Rechercher (nom, SKU, EAN...)"
                             clearable
                             class="w-72"
                         />
 
-                        <flux:select wire:model.live="position" label="Afficher" class="w-48">
+                        <flux:select wire:model.live="position" label="Afficher" class="w-56">
                             <flux:select.option value="all">Tous les produits</flux:select.option>
                             <flux:select.option value="pricier">Plus chers que le marché</flux:select.option>
                             <flux:select.option value="cheaper">Moins chers que le marché</flux:select.option>
                             <flux:select.option value="same">Même prix</flux:select.option>
+                            <flux:select.option value="suspect">À vérifier (écarts extrêmes)</flux:select.option>
                         </flux:select>
 
-                        <flux:select wire:model.live="order" label="Tri" class="w-56">
+                        <flux:select wire:model.live="order" label="Tri" class="w-60">
                             <flux:select.option value="gap_desc">Les plus chers d'abord</flux:select.option>
                             <flux:select.option value="gap_asc">Les moins chers d'abord</flux:select.option>
                             <flux:select.option value="gap_abs">Plus gros écart (±)</flux:select.option>
+                            <flux:select.option value="best_desc">Les plus loin du meilleur prix</flux:select.option>
                         </flux:select>
 
                         <flux:select wire:model.live="perPage" label="Lignes" class="w-24">
@@ -235,6 +311,10 @@
                             <flux:select.option value="50">50</flux:select.option>
                             <flux:select.option value="100">100</flux:select.option>
                         </flux:select>
+
+                        <flux:button variant="outline" icon="arrow-down-tray" wire:click="export">
+                            Export CSV
+                        </flux:button>
                     </div>
 
                     <flux:table :paginate="$products">
@@ -243,7 +323,8 @@
                             <flux:table.column align="end">Notre prix</flux:table.column>
                             <flux:table.column align="end">Prix du marché</flux:table.column>
                             <flux:table.column>Écart</flux:table.column>
-                            <flux:table.column>Fourchette concurrents</flux:table.column>
+                            <flux:table.column>Meilleur concurrent</flux:table.column>
+                            <flux:table.column>Fourchette</flux:table.column>
                         </flux:table.columns>
 
                         <flux:table.rows>
@@ -251,11 +332,14 @@
                                 <flux:table.row :key="'p-' . $p['sku']">
                                     <flux:table.cell>
                                         <div class="max-w-md truncate font-medium">{{ $p['title'] }}</div>
-                                        <div class="text-xs text-zinc-500">{{ $p['vendor'] }} · {{ $p['sku'] }}</div>
+                                        <div class="text-xs text-zinc-500">{{ $p['vendor'] }} · {{ $p['sku'] }}@if ($p['ean']) · EAN {{ $p['ean'] }}@endif</div>
                                     </flux:table.cell>
 
                                     <flux:table.cell variant="strong" align="end" class="whitespace-nowrap">
                                         {{ $fmt($p['ours']) }}
+                                        @if ($p['promo'] && $ourPrice === 'effective')
+                                            <div><flux:badge size="sm" color="blue">Promo</flux:badge></div>
+                                        @endif
                                     </flux:table.cell>
 
                                     <flux:table.cell align="end" class="whitespace-nowrap">
@@ -263,7 +347,7 @@
                                         <div class="text-xs text-zinc-500">{{ $p['n'] }} site(s)</div>
                                     </flux:table.cell>
 
-                                    <flux:table.cell class="py-0 whitespace-nowrap">
+                                    <flux:table.cell class="whitespace-nowrap">
                                         @if ($p['position'] === 'pricier')
                                             <flux:badge size="sm" color="red">
                                                 {{ $sgn($p['gap_pct']) }} plus cher
@@ -277,6 +361,21 @@
                                         @else
                                             <flux:badge size="sm">Même prix ({{ $sgn($p['gap_pct']) }})</flux:badge>
                                         @endif
+
+                                        @if ($p['suspect'])
+                                            <flux:badge size="sm" color="amber" class="ml-1">À vérifier</flux:badge>
+                                        @endif
+                                    </flux:table.cell>
+
+                                    <flux:table.cell class="whitespace-nowrap text-xs">
+                                        <div class="font-medium">{{ $p['best_site'] }} · {{ $fmt($p['min']) }}</div>
+                                        <div class="{{ $gapTone($p['gap_best_pct']) }}">
+                                            @if ($p['gap_best_pct'] <= 0.005)
+                                                nous sommes le moins cher
+                                            @else
+                                                nous : {{ $sgn($p['gap_best_pct']) }} vs ce prix
+                                            @endif
+                                        </div>
                                     </flux:table.cell>
 
                                     <flux:table.cell class="whitespace-nowrap text-xs text-zinc-500">
@@ -285,7 +384,7 @@
                                 </flux:table.row>
                             @empty
                                 <flux:table.row>
-                                    <flux:table.cell colspan="5" class="text-center text-zinc-500">
+                                    <flux:table.cell colspan="6" class="text-center text-zinc-500">
                                         Aucun produit pour ces filtres.
                                     </flux:table.cell>
                                 </flux:table.row>
@@ -310,7 +409,7 @@
                                     <flux:table.column>Répartition</flux:table.column>
                                     <flux:table.column align="end">Moins chers</flux:table.column>
                                     <flux:table.column align="end">Plus chers</flux:table.column>
-                                    <flux:table.column align="end">Écart moyen</flux:table.column>
+                                    <flux:table.column align="end">Écart médian</flux:table.column>
                                 </flux:table.columns>
 
                                 <flux:table.rows>
@@ -331,8 +430,8 @@
                                             <flux:table.cell align="end" class="whitespace-nowrap text-red-600 dark:text-red-400">
                                                 {{ $pct1($pct($row['pricier'], $row['n'])) }}
                                             </flux:table.cell>
-                                            <flux:table.cell align="end" class="whitespace-nowrap font-medium {{ $gapTone($row['avg']) }}">
-                                                {{ $sgn($row['avg']) }}
+                                            <flux:table.cell align="end" class="whitespace-nowrap font-medium {{ $gapTone($row['median']) }}" title="Moyenne : {{ $sgn($row['avg']) }}">
+                                                {{ $sgn($row['median']) }}
                                             </flux:table.cell>
                                         </flux:table.row>
                                     @endforeach
@@ -346,8 +445,9 @@
                 <div class="space-y-2">
                     <flux:heading size="lg">Concurrents</flux:heading>
                     <flux:text size="sm" class="text-zinc-500">
-                        « Le moins cher » = nombre de produits pour lesquels ce site propose le meilleur prix (ex æquo inclus).
-                        Écart moyen = de combien nous sommes plus chers (+) ou moins chers (−) que ce site.
+                        « Le moins cher » = produits pour lesquels ce site propose le meilleur prix (ex æquo inclus).
+                        « Moins cher que nous » = produits où ce site est strictement sous notre prix.
+                        Écart médian = de combien nous sommes plus chers (+) ou moins chers (−) que ce site.
                     </flux:text>
 
                     <flux:table>
@@ -355,8 +455,8 @@
                             <flux:table.column>Concurrent</flux:table.column>
                             <flux:table.column align="end">Produits comparés</flux:table.column>
                             <flux:table.column align="end">Le moins cher</flux:table.column>
-                            <flux:table.column align="end">% des produits</flux:table.column>
-                            <flux:table.column align="end">Écart moyen vs nous</flux:table.column>
+                            <flux:table.column align="end">Moins cher que nous</flux:table.column>
+                            <flux:table.column align="end">Écart médian vs nous</flux:table.column>
                         </flux:table.columns>
 
                         <flux:table.rows>
@@ -367,10 +467,16 @@
                                         <span class="text-xs font-normal text-zinc-400">{{ $site['country'] }}</span>
                                     </flux:table.cell>
                                     <flux:table.cell align="end" class="whitespace-nowrap">{{ $int($site['compared']) }}</flux:table.cell>
-                                    <flux:table.cell align="end" class="whitespace-nowrap font-medium">{{ $int($site['cheapest']) }}</flux:table.cell>
-                                    <flux:table.cell align="end" class="whitespace-nowrap">{{ $pct1($pct($site['cheapest'], $site['compared'])) }}</flux:table.cell>
-                                    <flux:table.cell align="end" class="whitespace-nowrap font-medium {{ $gapTone($site['avg']) }}">
-                                        {{ $sgn($site['avg']) }}
+                                    <flux:table.cell align="end" class="whitespace-nowrap font-medium">
+                                        {{ $int($site['cheapest']) }}
+                                        <span class="text-xs font-normal text-zinc-400">({{ $pct1($pct($site['cheapest'], $site['compared'])) }})</span>
+                                    </flux:table.cell>
+                                    <flux:table.cell align="end" class="whitespace-nowrap">
+                                        {{ $int($site['cheaper_us']) }}
+                                        <span class="text-xs font-normal text-zinc-400">({{ $pct1($pct($site['cheaper_us'], $site['compared'])) }})</span>
+                                    </flux:table.cell>
+                                    <flux:table.cell align="end" class="whitespace-nowrap font-medium {{ $gapTone($site['median']) }}">
+                                        {{ $sgn($site['median']) }}
                                     </flux:table.cell>
                                 </flux:table.row>
                             @endforeach

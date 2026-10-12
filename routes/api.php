@@ -58,5 +58,8 @@ Route::prefix('analytics')->group(function () {
     Route::delete('/cache', [AnalyticController::class, 'clearCache']);
 });
 
-Route::get('/positionement', [PositionementController::class, 'index']);
-Route::post('/positionement/refresh', [PositionementController::class, 'refresh']);
+Route::prefix('positionement')->group(function () {
+    Route::get('/', [PositionementController::class, 'index']);
+    Route::post('/refresh', [PositionementController::class, 'refresh'])
+        ->middleware('throttle:2,1'); // 2 appels par minute
+});

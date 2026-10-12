@@ -30,8 +30,11 @@ new class extends Component
         'best'   => 'Meilleur prix du marché',
     ];
 
-    // Au-delà, on arrête d'attendre un recalcul (secondes)
     private const REFRESH_TIMEOUT = 900;
+
+    // Relevé aberrant : hors de [médiane × 0,4 ; médiane × 2,5] des relevés du produit
+    private const OUTLIER_LOW  = 0.4;
+    private const OUTLIER_HIGH = 2.5;
 
     #[Url]
     public string $country = 'FR';
@@ -40,7 +43,6 @@ new class extends Component
     #[Url]
     public string $reference = 'median';
 
-    // Marque (vendor) ; vide = toutes
     #[Url]
     public string $vendor = '';
 
@@ -52,11 +54,31 @@ new class extends Component
     #[Url]
     public float $tolerance = 0.5;
 
-    // Filtre du tableau produits : all | pricier | cheaper | same
+    // Notre prix : effective (promo si elle existe) | regular (catalogue)
+    #[Url]
+    public string $ourPrice = 'effective';
+
+    // Nombre minimum de concurrents pour retenir un produit
+    #[Url]
+    public int $minSites = 1;
+
+    // Écarter les relevés aberrants (produit à ≥ 3 concurrents)
+    #[Url]
+    public bool $cleanOutliers = true;
+
+    // Au-delà de ± N % d'écart, le produit est "à vérifier" (0 = désactivé)
+    #[Url]
+    public int $outlierPct = 50;
+
+    // Exclure les produits "à vérifier" des statistiques
+    #[Url]
+    public bool $excludeSuspects = true;
+
+    // Filtre du tableau : all | pricier | cheaper | same | suspect
     #[Url]
     public string $position = 'all';
 
-    // Tri du tableau : gap_desc | gap_asc | gap_abs
+    // Tri : gap_desc | gap_asc | gap_abs | best_desc
     #[Url]
     public string $order = 'gap_desc';
 
@@ -68,12 +90,10 @@ new class extends Component
 
     public ?string $error = null;
 
-    // Recalcul demandé par l'utilisateur, en attente de la fin du job
     public bool $refreshing = false;
     public int $refreshStartedAt = 0;
     public int $refreshFromBuiltAt = 0;
 
-    // Tout changement de filtre => retour page 1
     public function updated(string $property): void
     {
         if (! str_contains($property, 'page')) {
@@ -81,10 +101,6 @@ new class extends Component
         }
     }
 
-    /**
-     * Demande un recalcul en arrière-plan (job). Les chiffres actuels restent affichés
-     * jusqu'à ce que le nouveau jeu de données soit prêt (suivi par checkRefresh).
-     */
     public function refresh(): void
     {
         $this->error = null;
@@ -92,7 +108,8 @@ new class extends Component
         try {
             $this->refreshFromBuiltAt = (int) ($this->dataset['built_at'] ?? 0);
 
-            app(PositionnementPrixService::class)->dispatchRefresh();
+            // force = true : un clic explicite relance même si un ancien flag est resté bloqué
+            app(PositionnementPrixService::class)->dispatchRefresh(true);
 
             $this->refreshing       = true;
             $this->refreshStartedAt = time();
@@ -102,9 +119,6 @@ new class extends Component
         }
     }
 
-    /**
-     * Appelée par wire:poll tant qu'un calcul est en cours.
-     */
     public function checkRefresh(): void
     {
         if (! $this->refreshing) {
@@ -127,6 +141,39 @@ new class extends Component
         }
     }
 
+    /**
+     * Export CSV (séparateur « ; », UTF-8 avec BOM pour Excel) de la liste filtrée.
+     */
+    public function export()
+    {
+        $rows = $this->filtered;
+
+        return response()->streamDownload(function () use ($rows) {
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+
+            fputcsv($out, [
+                'SKU', 'EAN', 'Produit', 'Marque', 'Notre prix', 'Prix marché', 'Écart €', 'Écart %',
+                'Position', 'Meilleur concurrent', 'Meilleur prix', 'Écart vs meilleur %',
+                'Nb concurrents', 'Prix max', 'Promo', 'À vérifier',
+            ], ';');
+
+            $n = fn ($v) => number_format((float) $v, 2, ',', '');
+
+            foreach ($rows as $p) {
+                fputcsv($out, [
+                    $p['sku'], $p['ean'], $p['title'], $p['vendor'], $n($p['ours']), $n($p['market']),
+                    $n($p['gap_eur']), $n($p['gap_pct']),
+                    ['pricier' => 'Plus cher', 'cheaper' => 'Moins cher', 'same' => 'Même prix'][$p['position']],
+                    $p['best_site'], $n($p['min']), $n($p['gap_best_pct']),
+                    $p['n'], $n($p['max']), $p['promo'] ? 'oui' : 'non', $p['suspect'] ? 'oui' : 'non',
+                ], ';');
+            }
+
+            fclose($out);
+        }, 'positionnement-prix-' . now()->format('Ymd-Hi') . '.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
     #[Computed]
     public function countries(): array
     {
@@ -139,10 +186,6 @@ new class extends Component
         return self::REFERENCES;
     }
 
-    /**
-     * Jeu de données compact, LU DANS LE CACHE (instantané). Si absent ou périmé,
-     * le service déclenche lui-même le calcul en arrière-plan.
-     */
     #[Computed]
     public function dataset(): array
     {
@@ -152,7 +195,6 @@ new class extends Component
             $service = app(PositionnementPrixService::class);
             $data    = $service->dataset();
 
-            // Dernière erreur du job (ex. API comparateur en échec)
             $this->error = $service->lastError();
 
             return $data;
@@ -160,18 +202,16 @@ new class extends Component
             Log::error('Positionnement prix (Livewire) : ' . $e->getMessage(), ['exception' => $e]);
             $this->error = $e->getMessage();
 
-            return ['built_at' => null, 'rows' => []];
+            return ['built_at' => null, 'rows' => [], 'stats' => []];
         }
     }
 
-    // Premier calcul : aucune donnée en cache pour l'instant
     #[Computed]
     public function isBuilding(): bool
     {
         return ($this->dataset['built_at'] ?? null) === null;
     }
 
-    // Données de plus de 30 min (un recalcul est lancé en arrière-plan par le service)
     #[Computed]
     public function isStale(): bool
     {
@@ -199,27 +239,44 @@ new class extends Component
         return array_values($vendors);
     }
 
+    private function median(array $values): ?float
+    {
+        if (empty($values)) {
+            return null;
+        }
+
+        sort($values);
+        $n   = count($values);
+        $mid = intdiv($n, 2);
+
+        return $n % 2 ? (float) $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
+    }
+
     /**
-     * Statistiques et liste des produits, selon les filtres actifs.
+     * Statistiques sur les produits matchés, selon les filtres actifs.
      *
-     * Pour chaque produit : prix de référence du marché (médiane / moyenne / meilleur prix
-     * des concurrents en euros, même contenance, pays et fraîcheur choisis), puis
-     *   écart % = notre prix ÷ prix marché − 1
-     *   > 0 : nous vendons plus cher que le marché
-     *   < 0 : nous vendons moins cher que le marché
+     *   écart % = notre prix ÷ prix marché − 1   (> 0 : nous sommes plus chers)
+     *
+     * Fiabilisation :
+     *  - relevés filtrés par pays, fraîcheur, et (option) contenance vérifiée
+     *  - relevés aberrants écartés (option)
+     *  - produits aux écarts extrêmes marqués "à vérifier" et exclus des stats (option)
      */
     #[Computed]
     public function analysis(): array
     {
-        $cut = $this->maxAge > 0 ? now()->subDays($this->maxAge)->getTimestamp() : null;
-        $tol = max(0.0, $this->tolerance);
+        $cut   = $this->maxAge > 0 ? now()->subDays($this->maxAge)->getTimestamp() : null;
+        $tol   = max(0.0, $this->tolerance);
+        $limit = max(0, $this->outlierPct);
+        $min_n = max(1, $this->minSites);
 
-        $newBucket = fn () => ['n' => 0, 'cheaper' => 0, 'same' => 0, 'pricier' => 0, 'sum' => 0.0];
+        $newBucket = fn () => ['n' => 0, 'cheaper' => 0, 'same' => 0, 'pricier' => 0, 'sum' => 0.0, 'gaps' => []];
 
         $add = function (array &$bucket, string $position, float $gapPct): void {
             $bucket['n']++;
             $bucket[$position]++;
             $bucket['sum'] += $gapPct;
+            $bucket['gaps'][] = $gapPct;
         };
 
         $global   = $newBucket();
@@ -228,13 +285,15 @@ new class extends Component
         $bySite   = [];
         $gaps     = [];
         $list     = [];
+        $weBest   = 0; // produits où nous sommes (ex æquo) le moins cher
+
+        $stats = ['removed' => 0, 'suspects' => 0, 'too_few' => 0];
 
         foreach ($this->dataset['rows'] as $r) {
             if ($this->vendor !== '' && $r['vendor'] !== $this->vendor) {
                 continue;
             }
 
-            // Relevés retenus : pays de l'onglet + fraîcheur
             $valid = array_values(array_filter($r['competitors'], function (array $c) use ($cut) {
                 if ($this->country !== 'all' && $c['country'] !== $this->country) {
                     return false;
@@ -247,15 +306,32 @@ new class extends Component
                 continue;
             }
 
-            $prices = array_column($valid, 'price');
-            sort($prices);
+            usort($valid, fn ($a, $b) => $a['price'] <=> $b['price']);
 
-            $count = count($prices);
-            $min   = $prices[0];
-            $max   = $prices[$count - 1];
-            $avg   = array_sum($prices) / $count;
-            $mid   = intdiv($count, 2);
-            $med   = $count % 2 ? $prices[$mid] : ($prices[$mid - 1] + $prices[$mid]) / 2;
+            // Relevés aberrants (ex. mauvais EAN, lot vs unité) : écartés si ≥ 3 concurrents
+            if ($this->cleanOutliers && count($valid) >= 3) {
+                $m     = $this->median(array_column($valid, 'price'));
+                $clean = array_values(array_filter(
+                    $valid,
+                    fn ($c) => $c['price'] >= $m * self::OUTLIER_LOW && $c['price'] <= $m * self::OUTLIER_HIGH
+                ));
+
+                $stats['removed'] += count($valid) - count($clean);
+                $valid = $clean;
+            }
+
+            if (count($valid) < $min_n) {
+                $stats['too_few']++;
+                continue;
+            }
+
+            $prices = array_column($valid, 'price'); // déjà trié croissant
+            $count  = count($prices);
+            $min    = $prices[0];
+            $max    = $prices[$count - 1];
+            $avg    = array_sum($prices) / $count;
+            $med    = $this->median($prices);
+            $best   = $valid[0];
 
             $market = match ($this->reference) {
                 'best'  => $min,
@@ -267,10 +343,40 @@ new class extends Component
                 continue;
             }
 
-            $ours   = (float) $r['ours'];
-            $gapPct = ($ours / $market - 1) * 100; // > 0 : nous sommes plus chers
+            $ours    = (float) ($this->ourPrice === 'regular' ? ($r['regular'] ?? $r['ours']) : $r['ours']);
+            $gapPct  = ($ours / $market - 1) * 100;
+            $gapBest = ($ours / $min - 1) * 100;
 
             $position = abs($gapPct) <= $tol ? 'same' : ($gapPct > 0 ? 'pricier' : 'cheaper');
+            $suspect  = $limit > 0 && abs($gapPct) > $limit;
+            $isBest   = $ours <= $min + 0.005;
+
+            if ($suspect) {
+                $stats['suspects']++;
+            }
+
+            $list[] = [
+                'sku'          => $r['sku'],
+                'ean'          => $r['ean'] ?? '',
+                'title'        => $r['title'],
+                'vendor'       => $r['vendor'],
+                'ours'         => $ours,
+                'market'       => round($market, 2),
+                'min'          => $min,
+                'max'          => $max,
+                'best_site'    => $best['name'],
+                'n'            => $count,
+                'gap_eur'      => round($ours - $market, 2),
+                'gap_pct'      => round($gapPct, 1),
+                'gap_best_pct' => round($gapBest, 1),
+                'position'     => $position,
+                'suspect'      => $suspect,
+                'promo'        => (bool) ($r['on_promo'] ?? false),
+            ];
+
+            if ($suspect && $this->excludeSuspects) {
+                continue;
+            }
 
             $add($global, $position, $gapPct);
 
@@ -282,54 +388,64 @@ new class extends Component
 
             $gaps[] = $gapPct;
 
-            $list[] = [
-                'sku'      => $r['sku'],
-                'title'    => $r['title'],
-                'vendor'   => $r['vendor'],
-                'ours'     => $ours,
-                'market'   => round($market, 2),
-                'min'      => $min,
-                'max'      => $max,
-                'n'        => $count,
-                'gap_eur'  => round($ours - $market, 2),
-                'gap_pct'  => round($gapPct, 1),
-                'position' => $position,
-            ];
+            if ($isBest) {
+                $weBest++;
+            }
 
-            // Statistiques par concurrent (indépendantes de la référence choisie)
+            // Statistiques par concurrent
             foreach ($valid as $c) {
                 $bySite[$c['key']] ??= [
-                    'name'     => $c['name'],
-                    'country'  => $c['country'],
-                    'compared' => 0,
-                    'cheapest' => 0,
-                    'sum'      => 0.0,
+                    'name'          => $c['name'],
+                    'country'       => $c['country'],
+                    'compared'      => 0,
+                    'cheapest'      => 0,
+                    'cheaper_us'    => 0,
+                    'gaps'          => [],
                 ];
 
                 $bySite[$c['key']]['compared']++;
-                $bySite[$c['key']]['sum'] += ($ours / $c['price'] - 1) * 100;
+                $bySite[$c['key']]['gaps'][] = ($ours / $c['price'] - 1) * 100;
 
-                // Concurrent(s) au meilleur prix (ex æquo inclus)
                 if ($c['price'] <= $min + 0.005) {
                     $bySite[$c['key']]['cheapest']++;
+                }
+
+                if ($c['price'] < $ours - 0.005) {
+                    $bySite[$c['key']]['cheaper_us']++;
                 }
             }
         }
 
-        // Médiane des écarts
-        $median = null;
+        // Répartition des écarts (histogramme)
+        $bins = [
+            ['< −20 %',      -INF, -20, 'green'],
+            ['−20 à −10 %',  -20,  -10, 'green'],
+            ['−10 à −5 %',   -10,  -5,  'green'],
+            ['−5 à −1 %',    -5,   -1,  'green'],
+            ['−1 à +1 %',    -1,   1,   'zinc'],
+            ['+1 à +5 %',    1,    5,   'red'],
+            ['+5 à +10 %',   5,    10,  'red'],
+            ['+10 à +20 %',  10,   20,  'red'],
+            ['> +20 %',      20,   INF, 'red'],
+        ];
 
-        if (! empty($gaps)) {
-            sort($gaps);
-            $mid    = intdiv(count($gaps), 2);
-            $median = count($gaps) % 2 ? $gaps[$mid] : ($gaps[$mid - 1] + $gaps[$mid]) / 2;
-        }
+        $histogram = array_map(function (array $b) use ($gaps) {
+            return [
+                'label' => $b[0],
+                'tone'  => $b[3],
+                'n'     => count(array_filter($gaps, fn ($g) => $g >= $b[1] && $g < $b[2])),
+            ];
+        }, $bins);
 
         $finalize = function (array $buckets): array {
             $rows = [];
 
             foreach ($buckets as $name => $b) {
-                $rows[] = $b + ['name' => (string) $name, 'avg' => $b['n'] ? $b['sum'] / $b['n'] : 0.0];
+                $rows[] = $b + [
+                        'name'   => (string) $name,
+                        'avg'    => $b['n'] ? $b['sum'] / $b['n'] : 0.0,
+                        'median' => $this->median($b['gaps']) ?? 0.0,
+                    ];
             }
 
             usort($rows, fn ($a, $b) => $b['n'] <=> $a['n']);
@@ -338,48 +454,69 @@ new class extends Component
         };
 
         $sites = array_map(
-            fn ($s) => $s + ['avg' => $s['compared'] ? $s['sum'] / $s['compared'] : 0.0],
+            fn ($s) => $s + ['median' => $this->median($s['gaps']) ?? 0.0],
             array_values($bySite)
         );
         usort($sites, fn ($a, $b) => $b['cheapest'] <=> $a['cheapest']);
 
         return [
-            'global'  => $global + ['avg' => $global['n'] ? $global['sum'] / $global['n'] : 0.0, 'median' => $median],
-            'vendors' => $finalize($byVendor),
-            'types'   => $finalize($byType),
-            'sites'   => $sites,
-            'list'    => $list,
+            'global'    => $global + [
+                    'avg'    => $global['n'] ? $global['sum'] / $global['n'] : 0.0,
+                    'median' => $this->median($gaps),
+                    'best'   => $weBest,
+                ],
+            'vendors'   => $finalize($byVendor),
+            'types'     => $finalize($byType),
+            'sites'     => $sites,
+            'list'      => $list,
+            'histogram' => $histogram,
+            'stats'     => $stats,
         ];
     }
 
     /**
-     * Tableau des produits : filtré (position, recherche), trié, paginé.
+     * Liste filtrée (position, recherche) et triée. Sert au tableau ET à l'export CSV.
      */
     #[Computed]
-    public function products(): LengthAwarePaginator
+    public function filtered(): array
     {
-        $page    = $this->getPage();
-        $options = ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'];
+        $rows = array_filter($this->analysis['list'], function (array $p) {
+            if ($this->position === 'suspect') {
+                return $p['suspect'];
+            }
 
-        $rows = $this->analysis['list'];
+            // Les produits "à vérifier" n'apparaissent que dans leur filtre dédié quand ils sont exclus
+            if ($this->excludeSuspects && $p['suspect']) {
+                return false;
+            }
 
-        if ($this->position !== 'all') {
-            $rows = array_filter($rows, fn ($p) => $p['position'] === $this->position);
-        }
+            return $this->position === 'all' || $p['position'] === $this->position;
+        });
 
         $needle = mb_strtolower(trim($this->search));
 
         if ($needle !== '') {
-            $rows = array_filter($rows, fn ($p) => str_contains(mb_strtolower($p['title'] . ' ' . $p['sku']), $needle));
+            $rows = array_filter($rows, fn ($p) => str_contains(mb_strtolower($p['title'] . ' ' . $p['sku'] . ' ' . $p['ean']), $needle));
         }
 
         $rows = array_values($rows);
 
         usort($rows, match ($this->order) {
-            'gap_asc' => fn ($a, $b) => $a['gap_pct'] <=> $b['gap_pct'],
-            'gap_abs' => fn ($a, $b) => abs($b['gap_pct']) <=> abs($a['gap_pct']),
-            default   => fn ($a, $b) => $b['gap_pct'] <=> $a['gap_pct'],
+            'gap_asc'   => fn ($a, $b) => $a['gap_pct'] <=> $b['gap_pct'],
+            'gap_abs'   => fn ($a, $b) => abs($b['gap_pct']) <=> abs($a['gap_pct']),
+            'best_desc' => fn ($a, $b) => $b['gap_best_pct'] <=> $a['gap_best_pct'],
+            default     => fn ($a, $b) => $b['gap_pct'] <=> $a['gap_pct'],
         });
+
+        return $rows;
+    }
+
+    #[Computed]
+    public function products(): LengthAwarePaginator
+    {
+        $page    = $this->getPage();
+        $options = ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'page'];
+        $rows    = $this->filtered;
 
         return new LengthAwarePaginator(
             items: array_slice($rows, ($page - 1) * $this->perPage, $this->perPage),

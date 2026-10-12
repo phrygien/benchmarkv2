@@ -15,27 +15,40 @@ use Illuminate\Validation\Rule;
 |   GET  /api/positionement           positionnement prix vs marché (% moins cher / aligné / plus cher)
 |   POST /api/positionement/refresh   relance le calcul en arrière-plan
 |
+| Base : produits MATCHÉS par EAN uniquement. On compare notre prix au prix_ht du concurrent
+| (devise = euro, aucune vérification de variation / contenance).
+|
 | Paramètres de GET /api/positionement :
-|   reference        min | avg | median (défaut median) : prix de marché de référence
-|   tolerance        % d'écart considéré comme "aligné" (défaut 2)
-|   marque, type     filtres (contient, insensible à la casse)
-|   country          code pays concurrent (FR, DE, ...) : ne compare qu'aux concurrents de ce pays
-|   competitor       nom / domaine du concurrent : ne compare qu'à ce concurrent
-|   min_competitors  nb minimum de concurrents par produit (défaut 1)
-|   group_by         marque | type | country | competitor : ajoute une ventilation
-|   include_products 1 => ajoute la liste des produits (triée du plus cher au moins cher)
-|   status           cheaper | aligned | expensive : filtre la liste des produits
-|   page, per_page   pagination de la liste des produits (per_page max 200)
+|   reference         min | avg | median (défaut median) : prix de marché de référence
+|   our_price         effective (promo incluse, défaut) | regular (prix catalogue)
+|   tolerance         % d'écart considéré comme "aligné" (défaut 2)
+|   marque, type      filtres (contient, insensible à la casse)
+|   search            filtre sur titre / SKU / EAN (contient)
+|   country           code pays concurrent (FR, DE, ...) : ne compare qu'aux concurrents de ce pays
+|   competitor        nom / domaine du concurrent : ne compare qu'à ce concurrent
+|   max_age           ignore les relevés de plus de N jours (défaut : tous)
+|   min_competitors   nb minimum de concurrents par produit (défaut 1)
+|   clean_outliers    1 (défaut) : écarte les relevés aberrants (produit à >= 3 concurrents)
+|   suspect_pct       au-delà de ± N % d'écart, le produit est "suspect" (défaut 50, 0 = désactivé)
+|   exclude_suspects  1 (défaut) : exclut les produits suspects des statistiques
+|   group_by          marque | type | country | competitor : ajoute une ventilation
+|   include_products  1 => ajoute la liste des produits (triée du plus cher au moins cher)
+|   status            cheaper | aligned | expensive | suspect : filtre la liste des produits
+|   page, per_page    pagination de la liste des produits (per_page max 200)
 |
 | Exemples :
 |   GET /api/positionement
 |   GET /api/positionement?reference=min&tolerance=0&group_by=marque
-|   GET /api/positionement?country=FR&include_products=1&status=expensive&per_page=50
+|   GET /api/positionement?country=FR&max_age=14&include_products=1&status=expensive&per_page=50
 */
 
 class PositionementController extends Controller
 {
     private const MAX_GROUPS = 100;
+
+    // Relevé aberrant : hors de [médiane × 0,4 ; médiane × 2,5] (même règle que la page Livewire)
+    private const OUTLIER_LOW  = 0.4;
+    private const OUTLIER_HIGH = 2.5;
 
     public function __construct(private PositionnementPrixService $service)
     {
@@ -45,28 +58,40 @@ class PositionementController extends Controller
     {
         $v = $request->validate([
             'reference'        => ['nullable', Rule::in(['min', 'avg', 'median'])],
+            'our_price'        => ['nullable', Rule::in(['effective', 'regular'])],
             'tolerance'        => ['nullable', 'numeric', 'min:0', 'max:50'],
             'marque'           => ['nullable', 'string', 'max:100'],
             'type'             => ['nullable', 'string', 'max:100'],
+            'search'           => ['nullable', 'string', 'max:100'],
             'country'          => ['nullable', 'string', 'size:2'],
             'competitor'       => ['nullable', 'string', 'max:100'],
+            'max_age'          => ['nullable', 'integer', 'min:1', 'max:365'],
             'min_competitors'  => ['nullable', 'integer', 'min:1', 'max:20'],
+            'clean_outliers'   => ['nullable', 'boolean'],
+            'suspect_pct'      => ['nullable', 'numeric', 'min:0', 'max:1000'],
+            'exclude_suspects' => ['nullable', 'boolean'],
             'group_by'         => ['nullable', Rule::in(['marque', 'type', 'country', 'competitor'])],
             'include_products' => ['nullable', 'boolean'],
-            'status'           => ['nullable', Rule::in(['cheaper', 'aligned', 'expensive'])],
+            'status'           => ['nullable', Rule::in(['cheaper', 'aligned', 'expensive', 'suspect'])],
             'page'             => ['nullable', 'integer', 'min:1'],
             'per_page'         => ['nullable', 'integer', 'min:1', 'max:200'],
         ]);
 
         $opts = [
-            'reference'       => $v['reference'] ?? 'median',
-            'tolerance'       => (float) ($v['tolerance'] ?? 2),
-            'marque'          => $v['marque'] ?? null,
-            'type'            => $v['type'] ?? null,
-            'country'         => isset($v['country']) ? strtoupper($v['country']) : null,
-            'competitor'      => $v['competitor'] ?? null,
-            'min_competitors' => (int) ($v['min_competitors'] ?? 1),
-            'group_by'        => $v['group_by'] ?? null,
+            'reference'        => $v['reference'] ?? 'median',
+            'our_price'        => $v['our_price'] ?? 'effective',
+            'tolerance'        => (float) ($v['tolerance'] ?? 2),
+            'marque'           => $v['marque'] ?? null,
+            'type'             => $v['type'] ?? null,
+            'search'           => $v['search'] ?? null,
+            'country'          => isset($v['country']) ? strtoupper($v['country']) : null,
+            'competitor'       => $v['competitor'] ?? null,
+            'max_age'          => isset($v['max_age']) ? (int) $v['max_age'] : null,
+            'min_competitors'  => (int) ($v['min_competitors'] ?? 1),
+            'clean_outliers'   => $request->has('clean_outliers') ? $request->boolean('clean_outliers') : true,
+            'suspect_pct'      => (float) ($v['suspect_pct'] ?? 50),
+            'exclude_suspects' => $request->has('exclude_suspects') ? $request->boolean('exclude_suspects') : true,
+            'group_by'         => $v['group_by'] ?? null,
         ];
 
         try {
@@ -80,6 +105,7 @@ class PositionementController extends Controller
                 ], 202, ['Retry-After' => 30]);
             }
 
+            $cut    = $opts['max_age'] ? now()->subDays($opts['max_age'])->getTimestamp() : null;
             $evals  = [];
             $groups = [];
 
@@ -88,7 +114,7 @@ class PositionementController extends Controller
                     continue;
                 }
 
-                $competitors = $this->filterCompetitors($row['competitors'], $opts);
+                $competitors = $this->filterCompetitors($row['competitors'], $opts, $cut);
 
                 if ($eval = $this->evaluate($row, $competitors, $opts)) {
                     $evals[] = $eval;
@@ -99,25 +125,29 @@ class PositionementController extends Controller
                 }
             }
 
-            $data = ['summary' => $this->summarize($evals)];
+            $data = ['summary' => $this->summarize($evals, $opts)];
 
             if ($opts['group_by']) {
-                $data['groups'] = $this->formatGroups($groups);
+                $data['groups'] = $this->formatGroups($groups, $opts);
             }
 
             if ($request->boolean('include_products')) {
-                $data['products'] = $this->productsPage($evals, $v);
+                $data['products'] = $this->productsPage($evals, $v, $opts);
             }
 
             return response()->json([
                 'data' => $data,
                 'meta' => [
-                    'reference'       => $opts['reference'],
-                    'tolerance_pct'   => $opts['tolerance'],
-                    'currency'        => 'EUR',
-                    'built_at'        => date('c', $dataset['built_at']),
-                    'quality'         => $dataset['stats'] ?? [],
-                    'stale'           => $this->service->isStale($dataset['built_at']),
+                    'reference'        => $opts['reference'],
+                    'our_price'        => $opts['our_price'],
+                    'tolerance_pct'    => $opts['tolerance'],
+                    'suspect_pct'      => $opts['suspect_pct'],
+                    'exclude_suspects' => $opts['exclude_suspects'],
+                    'clean_outliers'   => $opts['clean_outliers'],
+                    'currency'         => 'EUR',
+                    'built_at'         => date('c', $dataset['built_at']),
+                    'quality'          => $dataset['stats'] ?? [],
+                    'stale'            => $this->service->isStale($dataset['built_at']),
                 ],
             ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } catch (\Throwable $e) {
@@ -132,10 +162,12 @@ class PositionementController extends Controller
 
     /**
      * POST /api/positionement/refresh : relance le calcul en arrière-plan.
+     * Passe en force : un appel explicite relance même si un ancien flag est resté bloqué
+     * (le verrou de construction empêche de toute façon deux calculs simultanés).
      */
     public function refresh(): JsonResponse
     {
-        $queued = $this->service->dispatchRefresh();
+        $queued = $this->service->dispatchRefresh(true);
 
         return response()->json([
             'status'  => $queued ? 'queued' : 'already_queued',
@@ -161,16 +193,24 @@ class PositionementController extends Controller
             return false;
         }
 
+        if ($opts['search']) {
+            $haystack = $row['title'] . ' ' . $row['sku'] . ' ' . ($row['ean'] ?? '');
+
+            if (stripos($haystack, $opts['search']) === false) {
+                return false;
+            }
+        }
+
         return true;
     }
 
-    private function filterCompetitors(array $competitors, array $opts): array
+    private function filterCompetitors(array $competitors, array $opts, ?int $cut): array
     {
-        if (! $opts['country'] && ! $opts['competitor']) {
+        if (! $opts['country'] && ! $opts['competitor'] && $cut === null) {
             return $competitors;
         }
 
-        return array_values(array_filter($competitors, function (array $c) use ($opts) {
+        return array_values(array_filter($competitors, function (array $c) use ($opts, $cut) {
             if ($opts['country'] && $c['country'] !== $opts['country']) {
                 return false;
             }
@@ -178,6 +218,10 @@ class PositionementController extends Controller
             if ($opts['competitor']
                 && stripos($c['key'], $opts['competitor']) === false
                 && stripos($c['name'], $opts['competitor']) === false) {
+                return false;
+            }
+
+            if ($cut !== null && ($c['ts'] === null || $c['ts'] < $cut)) {
                 return false;
             }
 
@@ -197,23 +241,35 @@ class PositionementController extends Controller
      */
     private function evaluate(array $row, array $competitors, array $opts): ?array
     {
+        if (empty($competitors)) {
+            return null;
+        }
+
+        usort($competitors, fn ($a, $b) => $a['price'] <=> $b['price']);
+
+        // Relevés aberrants (mauvais EAN, lot vs unité...) : écartés si >= 3 concurrents
+        if ($opts['clean_outliers'] && count($competitors) >= 3) {
+            $m           = $this->median(array_column($competitors, 'price'));
+            $competitors = array_values(array_filter(
+                $competitors,
+                fn ($c) => $c['price'] >= $m * self::OUTLIER_LOW && $c['price'] <= $m * self::OUTLIER_HIGH
+            ));
+        }
+
         if (count($competitors) < $opts['min_competitors']) {
             return null;
         }
 
-        $prices = array_column($competitors, 'price');
-        sort($prices);
-
-        $count = count($prices);
-        $min   = $prices[0];
-        $max   = $prices[$count - 1];
-        $avg   = array_sum($prices) / $count;
-        $mid   = intdiv($count, 2);
-        $median = $count % 2 ? $prices[$mid] : ($prices[$mid - 1] + $prices[$mid]) / 2;
+        $prices = array_column($competitors, 'price'); // trié croissant
+        $count  = count($prices);
+        $min    = $prices[0];
+        $max    = $prices[$count - 1];
+        $avg    = array_sum($prices) / $count;
+        $median = $this->median($prices);
 
         $ref = match ($opts['reference']) {
-            'min' => $min,
-            'avg' => $avg,
+            'min'   => $min,
+            'avg'   => $avg,
             default => $median,
         };
 
@@ -221,7 +277,7 @@ class PositionementController extends Controller
             return null;
         }
 
-        $ours = $row['ours'];
+        $ours = (float) ($opts['our_price'] === 'regular' ? ($row['regular'] ?? $row['ours']) : $row['ours']);
         $gap  = ($ours - $ref) / $ref * 100;
 
         $status = match (true) {
@@ -232,20 +288,38 @@ class PositionementController extends Controller
 
         return [
             'sku'              => $row['sku'],
+            'ean'              => $row['ean'] ?? '',
             'title'            => $row['title'],
             'vendor'           => $row['vendor'],
             'type'             => $row['type'],
             'our_price'        => round($ours, 2),
+            'on_promo'         => (bool) ($row['on_promo'] ?? false),
             'market_reference' => round($ref, 2),
             'market_min'       => round($min, 2),
             'market_avg'       => round($avg, 2),
             'market_median'    => round($median, 2),
             'market_max'       => round($max, 2),
+            'best_competitor'  => $competitors[0]['name'],
             'competitors'      => $count,
             'gap_pct'          => round($gap, 2),
+            'gap_vs_best_pct'  => round(($ours / $min - 1) * 100, 2),
             'status'           => $status,
-            'is_cheapest'      => $ours <= $min,
+            'is_cheapest'      => $ours <= $min + 0.005,
+            'suspect'          => $opts['suspect_pct'] > 0 && abs($gap) > $opts['suspect_pct'],
         ];
+    }
+
+    private function median(array $values): ?float
+    {
+        if (empty($values)) {
+            return null;
+        }
+
+        sort($values);
+        $n   = count($values);
+        $mid = intdiv($n, 2);
+
+        return $n % 2 ? (float) $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
     }
 
     /*
@@ -254,29 +328,38 @@ class PositionementController extends Controller
     |--------------------------------------------------------------------------
     */
 
-    private function summarize(array $evals): array
+    private function summarize(array $evals, array $opts): array
     {
+        $suspects = count(array_filter($evals, fn ($e) => $e['suspect']));
+
+        if ($opts['exclude_suspects']) {
+            $evals = array_values(array_filter($evals, fn ($e) => ! $e['suspect']));
+        }
+
         $total = count($evals);
 
-        $counts = ['cheaper' => 0, 'aligned' => 0, 'expensive' => 0];
-        $gapSum = 0.0;
+        $counts   = ['cheaper' => 0, 'aligned' => 0, 'expensive' => 0];
+        $gaps     = [];
         $cheapest = 0;
 
         foreach ($evals as $e) {
             $counts[$e['status']]++;
-            $gapSum += $e['gap_pct'];
+            $gaps[]    = $e['gap_pct'];
             $cheapest += $e['is_cheapest'] ? 1 : 0;
         }
 
         $pct = fn (int $n) => $total > 0 ? round($n / $total * 100, 1) : 0.0;
 
         return [
-            'total_products' => $total,
-            'cheaper'   => ['count' => $counts['cheaper'],   'pct' => $pct($counts['cheaper'])],
-            'aligned'   => ['count' => $counts['aligned'],   'pct' => $pct($counts['aligned'])],
-            'expensive' => ['count' => $counts['expensive'], 'pct' => $pct($counts['expensive'])],
+            'total_products'     => $total,
+            'suspect_products'   => $suspects,
+            'cheaper'            => ['count' => $counts['cheaper'],   'pct' => $pct($counts['cheaper'])],
+            'aligned'            => ['count' => $counts['aligned'],   'pct' => $pct($counts['aligned'])],
+            'expensive'          => ['count' => $counts['expensive'], 'pct' => $pct($counts['expensive'])],
             'cheapest_of_market' => ['count' => $cheapest, 'pct' => $pct($cheapest)],
-            'avg_gap_pct' => $total > 0 ? round($gapSum / $total, 2) : 0.0,
+            // La médiane est moins sensible aux erreurs de données que la moyenne
+            'median_gap_pct'     => $total > 0 ? round($this->median($gaps), 2) : 0.0,
+            'avg_gap_pct'        => $total > 0 ? round(array_sum($gaps) / $total, 2) : 0.0,
         ];
     }
 
@@ -314,12 +397,12 @@ class PositionementController extends Controller
         }
     }
 
-    private function formatGroups(array $groups): array
+    private function formatGroups(array $groups, array $opts): array
     {
         $out = [];
 
         foreach ($groups as $label => $evals) {
-            $out[] = ['group' => (string) $label] + $this->summarize($evals);
+            $out[] = ['group' => (string) $label] + $this->summarize($evals, $opts);
         }
 
         usort($out, fn ($a, $b) => $b['total_products'] <=> $a['total_products']);
@@ -327,11 +410,22 @@ class PositionementController extends Controller
         return array_slice($out, 0, self::MAX_GROUPS);
     }
 
-    private function productsPage(array $evals, array $v): array
+    private function productsPage(array $evals, array $v, array $opts): array
     {
-        if (! empty($v['status'])) {
-            $evals = array_values(array_filter($evals, fn ($e) => $e['status'] === $v['status']));
-        }
+        $status = $v['status'] ?? null;
+
+        $evals = array_values(array_filter($evals, function (array $e) use ($status, $opts) {
+            if ($status === 'suspect') {
+                return $e['suspect'];
+            }
+
+            // Comme sur la page : les suspects n'apparaissent que via status=suspect quand ils sont exclus
+            if ($opts['exclude_suspects'] && $e['suspect']) {
+                return false;
+            }
+
+            return $status === null || $e['status'] === $status;
+        }));
 
         usort($evals, fn ($a, $b) => $b['gap_pct'] <=> $a['gap_pct']);
 
